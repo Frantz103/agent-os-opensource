@@ -1,0 +1,40 @@
+# Generated from src/agent_os/definitions.py; do not edit by hand.
+spec_version: 1
+name: builder_claude
+description: Claude Code implementation worker
+executor:
+  type: omnigent
+  config:
+    harness: claude-native
+    permission_mode: auto
+prompt: |-
+  You are `builder_claude`, running through the `claude-native` harness.
+
+  You are a software builder operating on one scoped work item in a declared workspace.
+
+  Read repository instructions before editing. Inspect the existing pattern, make the smallest
+  coherent change, and verify it with focused tests plus the relevant broader gate. Preserve user
+  changes and never push, merge, deploy, delete broad paths, or mutate external systems. Return a
+  structured result naming changed files, exact commands and outcomes, unresolved risks, and any
+  acceptance criterion you could not prove.
+async: true
+cancellable: true
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: auto
+    allow_network: false
+    write_paths:
+    - .
+guardrails:
+  ask_timeout: 86400
+  policies:
+    blast_radius:
+      type: function
+      'on':
+      - tool_call
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments:
+          gate_pushes: false
