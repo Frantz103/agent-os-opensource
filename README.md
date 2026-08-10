@@ -2,48 +2,49 @@
 
 Agent OS is a deliberately thin multi-agent task system built to measure what
 [NVIDIA NOOA](https://github.com/NVIDIA-NeMo/labs-OO-Agents) and
-[Omnigent](https://github.com/omnigent-ai/omnigent) already provide.
+[Omnigent](https://github.com/omnigent-ai/omnigent) already provide. It also evaluates
+[Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) as a persistent, long-running peer
+runtime.
 
 NOOA is the source of agent definitions: roles are Python classes, docstrings are prompts, and
 typed generation methods are their contracts. A small compiler emits an Omnigent bundle. Omnigent
-then owns the agent runtime: Claude Code and Codex harnesses, child sessions, inbox delivery,
-sandboxing, policies, conversation persistence, resume, and independent cross-vendor review.
+owns the Claude Code/Codex multi-harness path, including child sessions, sandboxing, policies,
+resume, and independent cross-vendor review. Prime Agent optionally owns persistent goals,
+autonomous continuation, daemon supervision, IPython context, recursive agents, and recovery.
 
 Agent OS adds only the missing domain layer: a task with an objective, workspace, constraints,
 acceptance criteria, attempts, evidence, and review verdicts.
 
 ```text
-NOOA classes and typed methods
-             |
-             | agent-os spec sync
-             v
-Omnigent coordinator bundle
-      |            |
-      |            +--> Claude Code builder/reviewer
-      +----------------> Codex builder/reviewer
-             |
-             v
-Omnigent sessions + sandbox + policies + resume
-             |
-             v
 Agent OS task/attempt/review evidence store
+                     |
+          NOOA typed role definitions
+                     |
+       +-------------+----------------+
+       |                              |
+       v                              v
+Omnigent bundle                  Prime Agent
+Claude Code + Codex              persistent goal/runtime
+sandbox + review                 daemon + IPython + RLM
 ```
 
 ## What works
 
-- Four NOOA role definitions: coordinator, planner, builder, and reviewer.
+- Five NOOA role definitions, including runtime-specific Omnigent and Prime coordinators.
 - Five Omnigent execution variants, including native Claude Code and Codex environments.
 - A durable SQLite task model with explicit state transitions and append-only task events.
 - Bounded task-context handoff that preserves the objective and acceptance contract.
 - Omnigent function tools that record attempts, evidence, reviews, and closure while agents work.
 - Cross-vendor review: Claude work is reviewed by Codex and Codex work by Claude.
 - A one-command dry run and live run path with persisted transcripts.
+- An optional bounded Prime Agent JSON runtime with persistent goals and autonomous limits.
 - Generated-spec drift checking and validation through Omnigent's own loader.
 
 ## Install
 
 Python 3.12-3.14, `uv`, Claude Code, and Codex are expected. Framework versions are pinned to the
-stable releases studied here: NOOA 0.0.8 and Omnigent 0.8.2.
+stable releases studied here: NOOA 0.0.8 and Omnigent 0.8.2. Prime Agent is optional and installed
+separately; the evaluation used version 0.7.1.
 
 ```bash
 uv sync --dev
@@ -80,6 +81,17 @@ uv run agent-os run tsk_...
 uv run agent-os task show tsk_...
 ```
 
+Or use Prime Agent's persistent runtime with explicit limits:
+
+```bash
+uv run agent-os run tsk_... --runtime prime-agent \
+  --token-budget 80000 --max-turns 12 --timeout-seconds 1800
+```
+
+Prime Agent emits JSONL into the attempt transcript and a successful process moves the task only to
+`needs_review`. It does not bypass independent review. Prime Agent is not an OS sandbox; use the
+Omnigent path or add external containment for untrusted work.
+
 Native child harnesses run with Omnigent's automation mode inside an OS sandbox restricted to the
 declared workspace and with network disabled. The prompts also prohibit push, merge, deployment,
 external mutation, and broad deletion. Change those defaults only after reviewing the generated
@@ -100,9 +112,10 @@ uv run python scripts/custom_loc.py
 ## Experiment findings
 
 The short answer is that the frameworks provide most agent and harness infrastructure. NOOA makes
-roles unusually testable and typed. Omnigent supplies far more multi-agent runtime than a new
-project should rebuild: harness adapters, persistent sessions, child delivery, policies, sandboxing,
-resume, streaming, and UI.
+roles unusually testable and typed. Omnigent supplies native harness interoperability, sandboxing,
+review routing, persistent sessions, policies, and UI. Prime Agent supplies the strongest
+long-running local runtime: goals, supervision, schedules, heartbeats, direct messaging, recursive
+agents, persistent Python, compaction, refinement, and recovery.
 
 The main missing seam is an explicit unit-of-work model that survives across sessions and binds
 acceptance criteria to attempts, review verdicts, and evidence. The second is a bridge from NOOA's
@@ -115,13 +128,15 @@ See also:
 - [Framework capability map](docs/research/framework-capability-map.md)
 - [Upstream research notes](docs/research/upstream-research.md)
 - [Verification record](docs/research/verification.md)
+- [Prime Agent evaluation](docs/research/prime-agent-evaluation.md)
 
 ## Status
 
 This is an early, local-first experiment over two alpha/research frameworks. It is useful for
 bounded repository tasks, but it is not a production control plane. In particular, it does not yet
-provide leases, distributed scheduling, approval delegation, remote worker recovery, or a protected
-merge/deploy workflow.
+provide distributed task leases, approval delegation, a hosted multi-tenant control plane, or a
+protected merge/deploy workflow. Prime Agent's local workers recover, but that is distinct from
+remote worker recovery or sandboxed execution.
 
 ## License
 

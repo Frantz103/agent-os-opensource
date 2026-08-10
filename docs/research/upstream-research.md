@@ -66,3 +66,38 @@ Agent OS therefore compiles NOOA definitions to an Omnigent bundle and lets Omni
 The integration gap is semantic: NOOA and Omnigent do not share an agent-definition format. Their
 persistence is also agent/session-centric rather than a project task ledger with acceptance and
 review evidence. Those are the only load-bearing seams implemented here.
+
+## Prime Agent
+
+- Repository: [PrimeIntellect-ai/prime-agent](https://github.com/PrimeIntellect-ai/prime-agent)
+- Reviewed main commit: `a18809e00ea30638584d87b3afea7285a9d7296c`
+- Package evaluated: `0.7.1`
+- Architecture: [coding-agent architecture](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/architecture.md)
+- Long-running runtime: [long-running agents](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/long-running-agents.md)
+- Recursive execution: [RLM](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/rlm.md)
+- Machine interfaces: [JSON](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/json.md) and [RPC](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/rpc.md)
+
+Files read included the root README and `AGENTS.md`; architecture, daemon, long-running-agent, RLM,
+runtime, compaction, session, JSON, RPC, and agent-connection documentation; CLI parsers and RPC
+types; daemon supervisor/worker protocols; kernel bootstrap/snapshot code; goal and autonomous-run
+code; scheduling and heartbeats; agent messaging; and Continual Harness implementation/tests.
+
+Architectural intent:
+
+- The UI/client is disposable; persistent root workers own agent sessions, schedules, kernels, and
+  descendants behind a local daemon supervisor.
+- Goals and autonomous limits make long work explicit. Heartbeats and schedules deliver prompts to
+  durable roots without requiring an attached terminal.
+- IPython is a persistent control environment. `rlm(...)` admits a recursive child, and explicit
+  messages or artifacts carry results back rather than blocking on a nested return value.
+- Context is treated as programmatic data. Automatic compaction, snapshots, child registries, and
+  session restoration prevent every working detail from remaining in one chat window.
+- The Continual Harness stores mutable, evidence-linked prompt/memory/skill/subagent overlays
+  separately from the immutable base system prompt and records snapshots for rollback.
+- JSON is a useful one-shot event boundary. RPC is the richer local integration protocol; it is not
+  a complete hosted control plane or security boundary.
+
+The full evidence, limitations, and per-capability decisions are in the
+[Prime Agent evaluation](prime-agent-evaluation.md). The conclusion is to add Prime as a peer runtime,
+adopt its long-running mechanics rather than rebuilding them, keep Omnigent for native sandboxed
+Claude/Codex interoperability, and retain Agent OS's product-level task/review ledger.

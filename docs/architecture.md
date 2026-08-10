@@ -2,15 +2,17 @@
 
 ## Design rule
 
-Use NOOA for the definition surface and Omnigent for execution. Add code only when neither framework
-has the domain concept Agent OS needs.
+Use NOOA for the definition surface, Omnigent for native multi-harness execution and review, and
+Prime Agent for persistent long-running execution. They are peer capabilities, not a mandatory
+linear stack. Add code only when none has the domain concept Agent OS needs.
 
 ## Definition layer: NOOA
 
-`src/agent_os/definitions.py` contains four `nooa.Agent` subclasses. The class docstring is the
+`src/agent_os/definitions.py` contains five `nooa.Agent` subclasses. The class docstring is the
 role prompt. Ellipsis-bodied methods are typed generation contracts:
 
 - `CoordinatorAgent.orchestrate(TaskSpec) -> FinalOutcome`
+- `PrimeCoordinatorAgent.orchestrate(TaskSpec) -> FinalOutcome`
 - `PlannerAgent.plan(TaskSpec) -> TaskPlan`
 - `BuilderAgent.execute(TaskSpec, TaskPlan) -> WorkResult`
 - `ReviewerAgent.review(TaskSpec, WorkResult) -> ReviewVerdict`
@@ -49,10 +51,27 @@ The coordinator receives a task id and uses ordinary Omnigent capabilities:
 Conversation history, child lifecycle, streaming, interruption, inbox wakeups, policies, sandboxes,
 and resume stay inside Omnigent.
 
+## Persistent execution: Prime Agent
+
+`agent-os run --runtime prime-agent` is a separate execution branch. It combines the NOOA
+`PrimeCoordinatorAgent` docstring with the authoritative task envelope and invokes Prime Agent in
+JSON mode with a persistent goal and explicit autonomous bounds. Prime owns its session JSONL,
+artifacts, context compaction, IPython kernel, recursive agents, messaging, and recovery. Agent OS
+records the outer attempt and transcript path.
+
+The integration currently uses one-shot JSON rather than RPC. This proves a useful process boundary
+without adding a custom daemon client. RPC is deferred until detached task control is needed because
+it requires version/capability negotiation, request correlation, and event normalization.
+
+Prime Agent is not placed underneath Omnigent. Omnigent remains the path for native Claude Code and
+Codex harness selection, sandboxed workspace execution, and different-vendor review. Prime is the
+path for work that benefits from persistent goals, programmatic context, recursive agents, and
+background recovery.
+
 ## Domain persistence
 
-Omnigent persists conversations and runtime events. NOOA persists an agent's event history and
-snapshots. Neither provides a project-level task record that binds an objective and acceptance
+Omnigent and Prime Agent persist conversations and runtime events. NOOA persists an agent's event
+history and snapshots. None provides a project-level task record that binds an objective and acceptance
 criteria to work performed by several independent harness sessions. `TaskStore` fills only that
 gap, using SQLite tables for tasks, attempts, reviews, and append-only task events.
 
@@ -61,8 +80,9 @@ Omnigent remains the session/history system.
 
 ## Context boundary
 
-Omnigent handles context inside a conversation, including history and resume. The custom context
-envelope handles a different boundary: starting a new session from durable task truth. It always
+Omnigent and Prime Agent handle context inside their conversations, including history, compaction,
+and resume. The custom context envelope handles a different boundary: starting a new session from
+durable task truth. It always
 preserves the objective, workspace, constraints, and acceptance criteria, then uses the remaining
 character budget for the most recent attempts and reviews.
 
@@ -71,4 +91,5 @@ character budget for the most recent attempts and reviews.
 NOOA's in-process generated-code checks are not a containment boundary. Agent OS does not execute
 NOOA-generated code in the host process. Work runs through Omnigent harnesses under the platform
 sandbox, with write access limited to the task workspace and network disabled in the generated
-bundle. Reviewers receive no write paths.
+bundle. Reviewers receive no write paths. Prime Agent workers and kernels inherit user permissions;
+Prime tasks involving untrusted code require a separately enforced OS/container sandbox.
