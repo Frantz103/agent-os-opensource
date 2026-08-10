@@ -10,7 +10,7 @@ from pathlib import Path
 
 from agent_os.context import build_task_context
 from agent_os.models import TaskStatus
-from agent_os.runner import RunPlan, find_omnigent_cli, run_task
+from agent_os.runner import RunPlan, find_omnigent_cli, find_prime_agent_cli, run_task
 from agent_os.specs import VARIANTS, check_specs, sync_specs, validate_bundle
 from agent_os.store import TaskStore
 
@@ -24,7 +24,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="Initialize state and generate the Omnigent bundle")
-    sub.add_parser("agents", help="List NOOA-defined Omnigent agent variants")
+    sub.add_parser("agents", help="List NOOA-defined runtime agent variants")
     sub.add_parser("doctor", help="Check framework CLIs and validate the bundle")
 
     spec = sub.add_parser("spec", help="Manage generated Omnigent agent specs")
@@ -48,9 +48,15 @@ def _parser() -> argparse.ArgumentParser:
 
     context = sub.add_parser("context", help="Render the task context envelope")
     context.add_argument("task_id")
-    run = sub.add_parser("run", help="Execute a task through Omnigent")
+    run = sub.add_parser("run", help="Execute a task through Omnigent or Prime Agent")
     run.add_argument("task_id")
     run.add_argument("--dry-run", action="store_true")
+    run.add_argument("--runtime", choices=["omnigent", "prime-agent"], default="omnigent")
+    run.add_argument("--token-budget", type=int, default=80_000, help="Prime Agent token budget")
+    run.add_argument("--max-turns", type=int, default=12, help="Prime Agent turn limit")
+    run.add_argument(
+        "--timeout-seconds", type=int, default=1_800, help="Prime Agent autonomous timeout"
+    )
     return parser
 
 
@@ -83,6 +89,8 @@ def _doctor(bundle: Path) -> int:
     for name, path in checks.items():
         print(f"{name:10} {'OK ' + path if path else 'MISSING'}")
         ok = ok and path is not None
+    prime_agent = find_prime_agent_cli()
+    print(f"{'prime-agent':10} {'OK ' + prime_agent if prime_agent else 'OPTIONAL MISSING'}")
     try:
         validate_bundle(bundle)
         print(f"bundle     OK {bundle}")
@@ -107,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "agents":
             print("coordinator\tclaude-sdk\tNOOA CoordinatorAgent")
+            print("prime_coordinator\tprime-agent\tNOOA PrimeCoordinatorAgent")
             for variant in VARIANTS:
                 print(f"{variant.name}\t{variant.harness}\tNOOA {variant.definition.__name__}")
             return 0
@@ -155,7 +164,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "run":
-            result = run_task(store, args.task_id, args.bundle, dry_run=args.dry_run)
+            result = run_task(
+                store,
+                args.task_id,
+                args.bundle,
+                dry_run=args.dry_run,
+                runtime=args.runtime,
+                token_budget=args.token_budget,
+                max_turns=args.max_turns,
+                timeout_seconds=args.timeout_seconds,
+            )
             if isinstance(result, RunPlan):
                 print(f"cwd: {result.cwd}")
                 print(f"command: {result.shell_command()}")

@@ -22,16 +22,37 @@ This map distinguishes directly observed upstream capability from infrastructure
 | NOOA-to-Omnigent bridge | No exporter | No NOOA importer | Add mechanical compiler |
 | Distributed workflow leases | Not a core task scheduler | Sessions and runners, not task leases | Explicitly out of MVP scope |
 
+## Prime Agent impact
+
+Prime Agent is a peer runtime rather than another layer in the NOOA-to-Omnigent compilation path.
+
+| Concern | Prime Agent | Agent OS decision |
+| --- | --- | --- |
+| Agent definition | System prompt plus supplemental prompts, memories, skills, and subagent specs | Keep immutable role authority in NOOA; allow governed supplemental refinement |
+| Persistent execution | Durable root workers, sessions, artifacts, goals, and kernel snapshots | Optional `prime-agent` runtime |
+| Long-running work | Autonomous limits, completion gates, schedules, and heartbeats | Adopt; do not build equivalents |
+| Multi-agent dispatch | Recursive `rlm(...)`, descendant registry, and direct messaging | Adopt inside Prime; retain Omnigent for named Claude/Codex harnesses |
+| Context | Persistent IPython, programmatic context, automatic compaction, restoration | Use with the authoritative cross-session task envelope |
+| Runtime learning | Evidence-linked Continual Harness overlays with snapshots and rollback | Needs broader held-out testing and promotion governance |
+| Supervision | Daemon, per-root worker, leases, attachment recovery, command journal | Adopt for Prime work; do not build a custom daemon |
+| Integration | JSON event stream and local JSONL RPC | Use JSON now; wrap RPC only for detached task control |
+| Sandboxing | None; workers and kernels inherit user permissions | Never treat Prime as containment |
+| Domain task model | Persistent goals and sessions, but no acceptance-linked cross-runtime review record | Keep the SQLite task/review layer |
+
+The detailed evidence and all nine decisions are in the
+[Prime Agent evaluation](prime-agent-evaluation.md).
+
 ## What still has to be built for production
 
 The experiment is intentionally not filling these gaps yet:
 
 - distributed claims, leases, fencing, and idempotent recovery;
 - task dependencies beyond the typed plan returned inside a session;
-- durable automated review-to-rework scheduling after a process crash;
+- durable automated cross-runtime review-to-rework scheduling after a process crash;
 - artifact manifests and checksums beyond evidence strings/transcript paths;
 - operator approval delegation and protected merge/deploy flows;
 - cost attribution joined to task/attempt ids;
-- remote worker health, retries, and stuck-session intervention.
+- remote worker health and multi-tenant stuck-session intervention.
 
-Those are control-plane capabilities, not missing model or harness adapters.
+Prime supplies local worker health and recovery. The remaining items are product or hosted
+control-plane capabilities, not missing model or harness adapters.

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-os-opensource"
 version = "0.1.0"
-description = "A thin, evidence-oriented multi-agent task layer over NVIDIA NOOA and Omnigent"
+description = "An evidence-oriented task layer over NOOA, Omnigent, and Prime Agent"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "Apache-2.0"
