@@ -13,18 +13,21 @@ class CoordinatorAgent(Agent):
     Begin by calling get_task_context with the task id in the request. Send the complete task
     context to planner with purpose `explore`. The planner returns a bounded plan; it never edits.
 
-    Dispatch implementation through sys_session_send to exactly one of builder_claude or
-    builder_codex unless the plan contains truly independent work items. Create an attempt record
-    with start_attempt before dispatch. Give every builder the objective, workspace, constraints,
+    Dispatch implementation through sys_session_send to exactly one of builder_claude,
+    builder_codex, builder_opencode, or builder_ollama unless the plan contains truly independent
+    work items. builder_opencode uses OpenCode with a cloud model through a provider credential;
+    builder_ollama uses OpenCode with a local Ollama model. Create an attempt record with
+    start_attempt before dispatch. Give every builder the objective, workspace, constraints,
     acceptance criteria, and verification requirements. Builders work only inside the declared
     workspace. They do not push, merge, deploy, or mutate external systems.
 
     When a builder returns, call finish_attempt with its evidence. Then send its result and the
-    actual workspace diff to a reviewer running on the other vendor: Claude work goes to
-    reviewer_codex; Codex work goes to reviewer_claude. Call record_review with the verdict.
-    A review is independent and read-only. If it requests changes, route one focused rework to the
-    original builder and review again. Do not loop more than once; mark the task blocked if material
-    issues remain.
+    actual workspace diff to an independent reviewer using a different intelligence provider:
+    Claude work goes to reviewer_codex; Codex work goes to reviewer_claude; OpenCode/OpenAI work
+    goes to reviewer_claude; local Ollama work goes to reviewer_codex. Call record_review with
+    the verdict. A review is independent and read-only. If it requests changes, route one focused
+    rework to the original builder and review again. Do not loop more than once; mark the task
+    blocked if material issues remain.
 
     Child sessions notify you through the inbox. Dispatch independent work in the same turn, read
     the inbox once, and end the turn if results are still pending. Never busy-poll.
@@ -70,9 +73,13 @@ class PlannerAgent(Agent):
 
     Return the smallest executable plan that can satisfy the acceptance criteria. Separate
     independent work only when parallel execution is safe. Choose builder_claude for architecture,
-    broad investigation, or ambiguous integration work; choose builder_codex for well-scoped code,
-    tests, and defensive implementation. Identify dependencies, risks, and concrete verification.
-    Do not edit files, launch child agents, or invent work outside the task contract.
+    broad investigation, or ambiguous integration work; builder_codex for well-scoped code, tests,
+    and defensive implementation; builder_opencode when OpenCode interoperability or its direct
+    cloud-provider path is useful; and builder_ollama for bounded, low-risk work whose
+    implementation can run on the available local model. Treat local-model output as implementation
+    evidence, not a reason to weaken verification or independent review. Identify dependencies,
+    risks, and concrete verification. Do not edit files, launch child agents, or invent work outside
+    the task contract.
     """
 
     async def plan(self, task: TaskSpec) -> TaskPlan:

@@ -21,6 +21,21 @@ source lines: 95 in the generalized launcher and 18 in the operator CLI. No exis
 deleted without losing the task acceptance/review contract or Omnigent's sandboxed cross-vendor
 harness path.
 
+The OpenCode/Ollama phase adds only declarative variants and one optional model field to the
+existing compiler. Omnigent already supplies `opencode-native`; OpenCode already supplies the
+OpenAI-compatible Ollama provider; Doppler already supplies launch-time secrets. Consequently this
+phase adds no custom harness adapter, model client, provider router, secret loader, daemon, or
+persistence component. The measured compiler count below includes the small declarative addition.
+The live probe also exposed that `sandbox.type: auto` passes Omnigent's schema but is not a runtime
+backend in 0.8.2. Removing that value lets Omnigent select its built-in platform backend, fixing the
+shared compiler configuration without adding custom sandbox code.
+
+This phase adds 41 measured source lines: 20 in the compiler for variant/model selection and 21 in
+the existing operator CLI. The CLI addition is necessary because Omnigent enforces its OpenCode
+version range only when a native session starts; Agent OS reuses Omnigent's own version resolver and
+validator to expose that incompatibility during `doctor` instead. No parallel compatibility logic
+was written.
+
 ## Current measured size
 
 Verified on 2026-08-09:
@@ -30,12 +45,12 @@ Verified on 2026-08-09:
 | typed task contracts | 89 | `src/agent_os/models.py` |
 | domain task persistence | 432 | `src/agent_os/store.py` |
 | cross-session context envelope | 57 | `src/agent_os/context.py` |
-| NOOA-to-Omnigent compiler | 251 | `src/agent_os/specs.py` |
+| NOOA-to-Omnigent compiler | 271 | `src/agent_os/specs.py` |
 | Omnigent task tool bridge | 75 | `src/agent_os/tools.py` |
 | multi-runtime process launcher | 205 | `src/agent_os/runner.py` |
-| operator task CLI | 162 | `src/agent_os/cli.py` |
+| operator task CLI | 183 | `src/agent_os/cli.py` |
 | gap measurement | 31 | `scripts/custom_loc.py` |
-| **Total** | **1,302** | |
+| **Total** | **1,343** | |
 
 Refresh with:
 
@@ -47,6 +62,8 @@ uv run python scripts/custom_loc.py
 
 - No custom agent loop.
 - No custom Claude Code or Codex adapter.
+- No custom OpenCode or Ollama adapter.
+- No custom API-key loader or checked-in provider credential.
 - No child-agent scheduler or polling loop.
 - No custom conversation/transcript database.
 - No custom sandbox, policy engine, cost limiter, terminal bridge, or UI.

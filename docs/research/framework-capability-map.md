@@ -12,7 +12,9 @@ This map distinguishes directly observed upstream capability from infrastructure
 | Context | Context blocks, pass-by-reference, summarization | Conversation history, child history, resume/fork | Add only cross-session task envelope |
 | Long-term memory | Optional typed relational SQLite memory | Optional Hindsight memory | Not required for MVP task truth |
 | Multi-agent dispatch | Python orchestration is possible, but no vendor meta-harness | Child sessions, inbox, async fan-out | Use Omnigent |
-| Claude/Codex harnesses | Model-agnostic LiteLLM execution, not CLI meta-harnessing | Native and SDK harnesses | Use Omnigent native children |
+| Coding harnesses | Model-agnostic LiteLLM execution, not CLI meta-harnessing | Native Claude Code, Codex, and OpenCode harnesses | Use Omnigent native children |
+| Local model execution | Model-agnostic LiteLLM can call compatible endpoints | OpenCode native sessions merge user provider definitions | Use OpenCode's Ollama provider; add no runner |
+| Cloud credentials | Provider environment variables | Native harness credential handling and isolated per-session auth/config | Inject with Doppler at process launch; store no keys |
 | Review fan-out | Can be programmed as Python | Already demonstrated by Polly/Scribe | Use Omnigent child routing |
 | Persistence/resume | Agent event/snapshot persistence | Server conversation persistence and resume | Use both for their native scope |
 | Sandboxing | In-process checks; upstream says OS isolation is required | macOS Seatbelt, Linux bwrap, cloud providers | Use Omnigent sandbox |
@@ -31,7 +33,7 @@ Prime Agent is a peer runtime rather than another layer in the NOOA-to-Omnigent 
 | Agent definition | System prompt plus supplemental prompts, memories, skills, and subagent specs | Keep immutable role authority in NOOA; allow governed supplemental refinement |
 | Persistent execution | Durable root workers, sessions, artifacts, goals, and kernel snapshots | Optional `prime-agent` runtime |
 | Long-running work | Autonomous limits, completion gates, schedules, and heartbeats | Adopt; do not build equivalents |
-| Multi-agent dispatch | Recursive `rlm(...)`, descendant registry, and direct messaging | Adopt inside Prime; retain Omnigent for named Claude/Codex harnesses |
+| Multi-agent dispatch | Recursive `rlm(...)`, descendant registry, and direct messaging | Adopt inside Prime; retain Omnigent for named Claude/Codex/OpenCode harnesses |
 | Context | Persistent IPython, programmatic context, automatic compaction, restoration | Use with the authoritative cross-session task envelope |
 | Runtime learning | Evidence-linked Continual Harness overlays with snapshots and rollback | Needs broader held-out testing and promotion governance |
 | Supervision | Daemon, per-root worker, leases, attachment recovery, command journal | Adopt for Prime work; do not build a custom daemon |

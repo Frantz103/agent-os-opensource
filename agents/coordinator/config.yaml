@@ -12,18 +12,21 @@ prompt: |-
   Begin by calling get_task_context with the task id in the request. Send the complete task
   context to planner with purpose `explore`. The planner returns a bounded plan; it never edits.
 
-  Dispatch implementation through sys_session_send to exactly one of builder_claude or
-  builder_codex unless the plan contains truly independent work items. Create an attempt record
-  with start_attempt before dispatch. Give every builder the objective, workspace, constraints,
+  Dispatch implementation through sys_session_send to exactly one of builder_claude,
+  builder_codex, builder_opencode, or builder_ollama unless the plan contains truly independent
+  work items. builder_opencode uses OpenCode with a cloud model through a provider credential;
+  builder_ollama uses OpenCode with a local Ollama model. Create an attempt record with
+  start_attempt before dispatch. Give every builder the objective, workspace, constraints,
   acceptance criteria, and verification requirements. Builders work only inside the declared
   workspace. They do not push, merge, deploy, or mutate external systems.
 
   When a builder returns, call finish_attempt with its evidence. Then send its result and the
-  actual workspace diff to a reviewer running on the other vendor: Claude work goes to
-  reviewer_codex; Codex work goes to reviewer_claude. Call record_review with the verdict.
-  A review is independent and read-only. If it requests changes, route one focused rework to the
-  original builder and review again. Do not loop more than once; mark the task blocked if material
-  issues remain.
+  actual workspace diff to an independent reviewer using a different intelligence provider:
+  Claude work goes to reviewer_codex; Codex work goes to reviewer_claude; OpenCode/OpenAI work
+  goes to reviewer_claude; local Ollama work goes to reviewer_codex. Call record_review with
+  the verdict. A review is independent and read-only. If it requests changes, route one focused
+  rework to the original builder and review again. Do not loop more than once; mark the task
+  blocked if material issues remain.
 
   Child sessions notify you through the inbox. Dispatch independent work in the same turn, read
   the inbox once, and end the turn if results are still pending. Never busy-poll.
@@ -39,6 +42,8 @@ tools:
   - planner
   - builder_claude
   - builder_codex
+  - builder_opencode
+  - builder_ollama
   - reviewer_claude
   - reviewer_codex
   get_task_context:

@@ -8,6 +8,12 @@ import shutil
 import sys
 from pathlib import Path
 
+from omnigent.opencode_native_app_server import (
+    OpenCodeVersionError,
+    check_opencode_version,
+    resolve_opencode_version,
+)
+
 from agent_os.context import build_task_context
 from agent_os.models import TaskStatus
 from agent_os.runner import RunPlan, find_omnigent_cli, find_prime_agent_cli, run_task
@@ -89,8 +95,25 @@ def _doctor(bundle: Path) -> int:
     for name, path in checks.items():
         print(f"{name:10} {'OK ' + path if path else 'MISSING'}")
         ok = ok and path is not None
-    prime_agent = find_prime_agent_cli()
-    print(f"{'prime-agent':10} {'OK ' + prime_agent if prime_agent else 'OPTIONAL MISSING'}")
+    opencode = shutil.which("opencode")
+    if opencode:
+        try:
+            version = resolve_opencode_version(opencode)
+            check_opencode_version(version)
+            print(f"{'opencode':10} OK {opencode} ({version})")
+        except (OSError, OpenCodeVersionError) as error:
+            ok = False
+            print(f"{'opencode':10} INCOMPATIBLE {error}")
+    else:
+        print(f"{'opencode':10} OPTIONAL MISSING")
+
+    optional_checks = {
+        "prime-agent": find_prime_agent_cli(),
+        "ollama": shutil.which("ollama"),
+        "doppler": shutil.which("doppler"),
+    }
+    for name, path in optional_checks.items():
+        print(f"{name:10} {'OK ' + path if path else 'OPTIONAL MISSING'}")
     try:
         validate_bundle(bundle)
         print(f"bundle     OK {bundle}")
