@@ -31,6 +31,8 @@ Omnigent agent-image directory. The mapping is intentionally mechanical:
 | planner | `PlannerAgent` | `claude-sdk` | read-only |
 | builder_claude | `BuilderAgent` | `claude-native` | workspace write |
 | builder_codex | `BuilderAgent` | `codex-native` | workspace write |
+| builder_opencode | `BuilderAgent` | `opencode-native`, `openai/gpt-5.6-terra` | workspace write |
+| builder_ollama | `BuilderAgent` | `opencode-native`, `ollama/qwen3:14b` | workspace write |
 | reviewer_claude | `ReviewerAgent` | `claude-native` | read-only |
 | reviewer_codex | `ReviewerAgent` | `codex-native` | read-only |
 
@@ -42,9 +44,9 @@ The coordinator receives a task id and uses ordinary Omnigent capabilities:
 
 1. A host function tool returns the authoritative task contract.
 2. `sys_session_send` dispatches a read-only planner.
-3. The coordinator dispatches a Claude Code or Codex builder.
+3. The coordinator dispatches a Claude Code, Codex, OpenCode cloud, or OpenCode/Ollama builder.
 4. Omnigent persists each child session and delivers completion through its inbox.
-5. The result and actual diff go to a reviewer on the other vendor.
+5. The result and actual diff go to a reviewer on a different intelligence provider.
 6. One focused rework is allowed after `request_changes`; remaining material issues block closure.
 7. Host function tools record attempts, evidence, review, and final status.
 
@@ -63,10 +65,10 @@ The integration currently uses one-shot JSON rather than RPC. This proves a usef
 without adding a custom daemon client. RPC is deferred until detached task control is needed because
 it requires version/capability negotiation, request correlation, and event normalization.
 
-Prime Agent is not placed underneath Omnigent. Omnigent remains the path for native Claude Code and
-Codex harness selection, sandboxed workspace execution, and different-vendor review. Prime is the
-path for work that benefits from persistent goals, programmatic context, recursive agents, and
-background recovery.
+Prime Agent is not placed underneath Omnigent. Omnigent remains the path for native Claude Code,
+Codex, and OpenCode harness selection, sandboxed workspace execution, and different-provider
+review. Prime is the path for work that benefits from persistent goals, programmatic context,
+recursive agents, and background recovery.
 
 ## Domain persistence
 
@@ -91,5 +93,19 @@ character budget for the most recent attempts and reviews.
 NOOA's in-process generated-code checks are not a containment boundary. Agent OS does not execute
 NOOA-generated code in the host process. Work runs through Omnigent harnesses under the platform
 sandbox, with write access limited to the task workspace and network disabled in the generated
-bundle. Reviewers receive no write paths. Prime Agent workers and kernels inherit user permissions;
-Prime tasks involving untrusted code require a separately enforced OS/container sandbox.
+bundle for agent tools. Provider calls are made by the harness outside that tool sandbox. Reviewers
+receive no write paths. Prime Agent workers and kernels inherit user permissions; Prime tasks
+involving untrusted code require a separately enforced OS/container sandbox.
+
+## Provider boundary
+
+Harness and intelligence provider are separate choices. Both new builders use Omnigent's existing
+`opencode-native` harness. `builder_opencode` pins a direct OpenAI model and receives
+`OPENAI_API_KEY` from the caller environment; `builder_ollama` pins the OpenCode provider model
+`ollama/qwen3:14b`, which resolves to the local OpenAI-compatible endpoint. Agent OS adds no model
+client, provider adapter, secret store, or fallback router.
+
+Cloud credentials are injected only into the launch process with Doppler. The repository stores
+the project/config names and required secret names, never values. Local Ollama registration lives
+in the user's OpenCode config because Omnigent 0.8.2 already merges user provider definitions into
+each isolated OpenCode session.

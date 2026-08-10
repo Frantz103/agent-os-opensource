@@ -33,6 +33,7 @@ class AgentVariant:
     harness: str
     access: str
     description: str
+    model: str | None = None
 
 
 VARIANTS = (
@@ -52,6 +53,22 @@ VARIANTS = (
         "Codex implementation worker",
     ),
     AgentVariant(
+        "builder_opencode",
+        BuilderAgent,
+        "opencode-native",
+        "read_write",
+        "OpenCode implementation worker using a Doppler-provided OpenAI key",
+        "openai/gpt-5.6-terra",
+    ),
+    AgentVariant(
+        "builder_ollama",
+        BuilderAgent,
+        "opencode-native",
+        "read_write",
+        "Local Ollama implementation worker through OpenCode",
+        "ollama/qwen3:14b",
+    ),
+    AgentVariant(
         "reviewer_claude",
         ReviewerAgent,
         "claude-native",
@@ -68,17 +85,22 @@ VARIANTS = (
 )
 
 
-def _executor(harness: str) -> dict[str, Any]:
+def _executor(harness: str, model: str | None = None) -> dict[str, Any]:
     config: dict[str, Any] = {"harness": harness}
     if harness == "claude-native":
         config["permission_mode"] = "auto"
     if harness == "codex-native":
         config["yolo"] = True
-    return {"type": "omnigent", "config": config}
+    executor: dict[str, Any] = {"type": "omnigent", "config": config}
+    if model is not None:
+        executor["model"] = model
+    return executor
 
 
 def _os_env(access: str) -> dict[str, Any]:
-    sandbox: dict[str, Any] = {"type": "auto", "allow_network": False}
+    # Omitting type makes Omnigent choose its platform backend at parse time
+    # (darwin_seatbelt, linux_bwrap, or windows_jobobject).
+    sandbox: dict[str, Any] = {"allow_network": False}
     sandbox["write_paths"] = ["."] if access == "read_write" else []
     return {"type": "caller_process", "cwd": ".", "sandbox": sandbox}
 
@@ -233,7 +255,7 @@ def variant_config(variant: AgentVariant) -> dict[str, Any]:
         "spec_version": 1,
         "name": variant.name,
         "description": variant.description,
-        "executor": _executor(variant.harness),
+        "executor": _executor(variant.harness, variant.model),
         "prompt": LiteralString(
             f"You are `{variant.name}`, running through the "
             f"`{variant.harness}` harness.\n\n{prompt}"

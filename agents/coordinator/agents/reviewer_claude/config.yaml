@@ -23,7 +23,6 @@ os_env:
   type: caller_process
   cwd: .
   sandbox:
-    type: auto
     allow_network: false
     write_paths: []
 guardrails:

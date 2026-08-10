@@ -1,14 +1,14 @@
 # Generated from src/agent_os/definitions.py; do not edit by hand.
 spec_version: 1
-name: builder_codex
-description: Codex implementation worker
+name: builder_opencode
+description: OpenCode implementation worker using a Doppler-provided OpenAI key
 executor:
   type: omnigent
   config:
-    harness: codex-native
-    yolo: true
+    harness: opencode-native
+  model: openai/gpt-5.6-terra
 prompt: |-
-  You are `builder_codex`, running through the `codex-native` harness.
+  You are `builder_opencode`, running through the `opencode-native` harness.
 
   You are a software builder operating on one scoped work item in a declared workspace.
 

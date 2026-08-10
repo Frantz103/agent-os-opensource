@@ -57,6 +57,27 @@ Architectural intent:
 - The Scribe example demonstrates a doer/reviewer split with a different-vendor reviewer.
 - Remy demonstrates optional Hindsight-backed cross-session memory.
 
+## OpenCode and Ollama extension
+
+- OpenCode repository: [anomalyco/opencode](https://github.com/anomalyco/opencode)
+- Provider documentation source:
+  [`providers.mdx`](https://github.com/anomalyco/opencode/blob/dev/packages/web/src/content/docs/providers.mdx)
+- Ollama OpenAI compatibility:
+  [official API documentation](https://docs.ollama.com/api/openai-compatibility)
+
+OpenCode's provider layer is powered by AI SDK providers and explicitly documents Ollama as an
+OpenAI-compatible custom provider at `http://localhost:11434/v1`. Omnigent 0.8.2 already ships an
+`opencode-native` harness and merges user-defined OpenCode provider blocks into its isolated
+per-session configuration. Its native server also passes supported provider environment families,
+including `OPENAI_`, from the launch process. These observed capabilities make both new paths
+declarative: an Omnigent executor model pin chooses direct OpenAI or local Ollama, while OpenCode
+continues to own provider calls, permissions, and session behavior.
+
+The local catalog was first inspected with OpenCode 1.18.4 and then reverified with Omnigent's
+compatible OpenCode 1.17.20 and Ollama 0.32.5. The selected `qwen3:14b` model advertises tool support
+and a 40,960-token context window. `gemma4:26b` is also registered but is not the default because
+its installed footprint and runtime demand are substantially larger.
+
 ## Integration conclusion
 
 Reimplementing a multi-agent event loop, harness adapter, sub-agent scheduler, terminal capture,

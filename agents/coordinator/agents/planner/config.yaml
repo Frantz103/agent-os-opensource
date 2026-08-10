@@ -13,16 +13,19 @@ prompt: |-
 
   Return the smallest executable plan that can satisfy the acceptance criteria. Separate
   independent work only when parallel execution is safe. Choose builder_claude for architecture,
-  broad investigation, or ambiguous integration work; choose builder_codex for well-scoped code,
-  tests, and defensive implementation. Identify dependencies, risks, and concrete verification.
-  Do not edit files, launch child agents, or invent work outside the task contract.
+  broad investigation, or ambiguous integration work; builder_codex for well-scoped code, tests,
+  and defensive implementation; builder_opencode when OpenCode interoperability or its direct
+  cloud-provider path is useful; and builder_ollama for bounded, low-risk work whose
+  implementation can run on the available local model. Treat local-model output as implementation
+  evidence, not a reason to weaken verification or independent review. Identify dependencies,
+  risks, and concrete verification. Do not edit files, launch child agents, or invent work outside
+  the task contract.
 async: true
 cancellable: true
 os_env:
   type: caller_process
   cwd: .
   sandbox:
-    type: auto
     allow_network: false
     write_paths: []
 guardrails:

@@ -8,9 +8,10 @@ runtime.
 
 NOOA is the source of agent definitions: roles are Python classes, docstrings are prompts, and
 typed generation methods are their contracts. A small compiler emits an Omnigent bundle. Omnigent
-owns the Claude Code/Codex multi-harness path, including child sessions, sandboxing, policies,
-resume, and independent cross-vendor review. Prime Agent optionally owns persistent goals,
-autonomous continuation, daemon supervision, IPython context, recursive agents, and recovery.
+owns the Claude Code, Codex, and OpenCode multi-harness path, including child sessions, sandboxing,
+policies, resume, and independent cross-provider review. OpenCode supplies both a cloud execution
+path and an OpenAI-compatible bridge to local Ollama models. Prime Agent optionally owns persistent
+goals, autonomous continuation, daemon supervision, IPython context, recursive agents, and recovery.
 
 Agent OS adds only the missing domain layer: a task with an objective, workspace, constraints,
 acceptance criteria, attempts, evidence, and review verdicts.
@@ -24,27 +25,30 @@ Agent OS task/attempt/review evidence store
        |                              |
        v                              v
 Omnigent bundle                  Prime Agent
-Claude Code + Codex              persistent goal/runtime
-sandbox + review                 daemon + IPython + RLM
+Claude + Codex + OpenCode        persistent goal/runtime
+cloud + local Ollama             daemon + IPython + RLM
 ```
 
 ## What works
 
 - Five NOOA role definitions, including runtime-specific Omnigent and Prime coordinators.
-- Five Omnigent execution variants, including native Claude Code and Codex environments.
+- Seven Omnigent execution variants, including native Claude Code, Codex, OpenCode, and local
+  Ollama environments.
 - A durable SQLite task model with explicit state transitions and append-only task events.
 - Bounded task-context handoff that preserves the objective and acceptance contract.
 - Omnigent function tools that record attempts, evidence, reviews, and closure while agents work.
-- Cross-vendor review: Claude work is reviewed by Codex and Codex work by Claude.
+- Cross-provider review: cloud OpenCode work is reviewed by Claude and local Ollama work by Codex,
+  while the existing Claude/Codex pairing remains reciprocal.
 - A one-command dry run and live run path with persisted transcripts.
 - An optional bounded Prime Agent JSON runtime with persistent goals and autonomous limits.
 - Generated-spec drift checking and validation through Omnigent's own loader.
 
 ## Install
 
-Python 3.12-3.14, `uv`, Claude Code, and Codex are expected. Framework versions are pinned to the
-stable releases studied here: NOOA 0.0.8 and Omnigent 0.8.2. Prime Agent is optional and installed
-separately; the evaluation used version 0.7.1.
+Python 3.12-3.14, `uv`, Claude Code, and Codex are expected. OpenCode and Ollama are optional
+additional environments. Framework versions are pinned to the stable releases studied here: NOOA
+0.0.8 and Omnigent 0.8.2. Prime Agent is optional and installed separately; the evaluation used
+version 0.7.1.
 
 ```bash
 uv sync --dev
@@ -52,8 +56,26 @@ uv run agent-os init
 uv run agent-os doctor
 ```
 
+Omnigent 0.8.2 requires OpenCode `>=1.17.7,<1.18.0`; the verified installation is:
+
+```bash
+npm install --global opencode-ai@1.17.20
+```
+
 Omnigent can reuse existing Claude Code and Codex subscription logins. If neither is configured,
 run `uv run omnigent setup`.
+
+OpenCode cloud runs use the direct `openai/gpt-5.6-terra` model. Keep its key out of the repository
+and inject it from the existing Doppler staging config:
+
+```bash
+doppler run --project web-data-projets --config stg -- \
+  uv run agent-os run tsk_...
+```
+
+The local `builder_ollama` variant is pinned to `ollama/qwen3:14b` and does not need a cloud key.
+OpenCode must have an `ollama` provider pointed at `http://localhost:11434/v1`; see
+[Provider setup](docs/providers.md) for the exact non-secret config and verification commands.
 
 ## Create and run a real task
 
