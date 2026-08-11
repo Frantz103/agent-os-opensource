@@ -372,7 +372,15 @@ def _runtime_failure(line: str) -> str | None:
         "Failed to start agent:",
         "Failed to launch agent:",
     )
-    return stripped if stripped.startswith(fatal_prefixes) else None
+    fatal_substrings = (
+        "You've hit your weekly limit",
+    )
+    return (
+        stripped
+        if stripped.startswith(fatal_prefixes)
+        or any(marker in stripped for marker in fatal_substrings)
+        else None
+    )
 
 
 def _terminate_process(process: subprocess.Popen[str]) -> None:

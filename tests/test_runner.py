@@ -200,16 +200,25 @@ def test_transcript_file_is_private(tmp_path: Path) -> None:
 
 def test_runtime_authentication_failure_is_not_treated_as_success() -> None:
     message = "Failed to authenticate: OAuth session expired and could not be refreshed\n"
+    usage_limit = "You've hit your weekly limit · resets tomorrow\n"
 
     assert _runtime_failure(message) == message.strip()
+    assert _runtime_failure(usage_limit) == usage_limit.strip()
     assert _runtime_failure("agent: implementation completed\n") is None
 
 
-def test_zero_exit_runtime_authentication_failure_fails_attempt(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("fatal_output", "summary_fragment"),
+    [
+        ("Failed to authenticate: expired test session", "expired test session"),
+        ("You've hit your weekly limit · resets tomorrow", "weekly limit"),
+    ],
+)
+def test_zero_exit_runtime_failure_fails_attempt(
+    tmp_path: Path, fatal_output: str, summary_fragment: str
+) -> None:
     fake_runtime = tmp_path / "fake-omnigent"
-    fake_runtime.write_text(
-        "#!/bin/sh\necho 'Failed to authenticate: expired test session'\nexit 0\n"
-    )
+    fake_runtime.write_text(f'#!/bin/sh\nprintf "%s\\n" "{fatal_output}"\nexit 0\n')
     fake_runtime.chmod(0o700)
     store = TaskStore(tmp_path / "state")
     workspace = tmp_path / "workspace"
@@ -232,7 +241,7 @@ def test_zero_exit_runtime_authentication_failure_fails_attempt(tmp_path: Path) 
     assert store.get_task(task.id).status is TaskStatus.FAILED
     attempt = store.list_attempts(task.id)[0]
     assert attempt.status.value == "failed"
-    assert "expired test session" in attempt.summary
+    assert summary_fragment in attempt.summary
 
 
 def test_omnigent_runtime_timeout_terminates_and_records_failure(tmp_path: Path) -> None:

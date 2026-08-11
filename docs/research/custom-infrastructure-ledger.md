@@ -47,10 +47,10 @@ Verified on 2026-08-10:
 | cross-session context envelope | 62 | `src/agent_os/context.py` |
 | NOOA-to-Omnigent compiler | 239 | `src/agent_os/specs.py` |
 | Omnigent task tool bridge | 70 | `src/agent_os/tools.py` |
-| multi-runtime process launcher | 359 | `src/agent_os/runner.py` |
+| multi-runtime process launcher | 366 | `src/agent_os/runner.py` |
 | operator task CLI | 213 | `src/agent_os/cli.py` |
 | gap measurement | 32 | `scripts/custom_loc.py` |
-| **Total** | **1,962** | |
+| **Total** | **1,969** | |
 
 Refresh with:
 

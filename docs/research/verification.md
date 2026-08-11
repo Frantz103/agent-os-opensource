@@ -14,7 +14,7 @@ are retained as dated experimental evidence and are not substitutes for the alph
 
 ## Automated checks
 
-- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 38 tests passed with 85% total
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 39 tests passed with 85% total
   statement coverage.
 - `.venv/bin/ruff check .`: passed.
 - `.venv/bin/pyright`: passed with zero errors or warnings.
@@ -40,6 +40,14 @@ both supported runtimes, with regression coverage. Agent OS now strips `ANTHROPI
 Omnigent environment even when an operator names it in the custom allowlist, and bundle validation
 checks the real runtime tool registry. The exposed credential still must be rotated before another
 provider run or public release.
+
+A fresh local-provider release probe after restoring Claude OAuth reached Omnigent coordination but
+the Claude subscription then reported its weekly usage limit. Omnigent surfaced that result as an
+error while still exiting zero; the untouched workspace tests remained failing, no builder attempt
+or review was recorded, and the host incorrectly moved the task to `needs_review`. Agent OS now
+recognizes the observed usage-limit marker as fatal and records the coordinator attempt and task as
+failed. The local end-to-end release gate therefore remains unpassed; the cloud gate was not
+started.
 
 The added Prime tests verify its NOOA coordinator contract, exact bounded command construction,
 runtime attribution, positive autonomous limits, and that dry runs do not create attempts.
