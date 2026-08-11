@@ -3,7 +3,7 @@
 This project follows Semantic Versioning. Alpha releases may still contain documented breaking
 changes.
 
-## 0.1.0a1 - Unreleased
+## 0.1.0a1 - 2026-08-11
 
 ### Added
 

@@ -99,6 +99,10 @@ are retained as dated experimental evidence and are not substitutes for the alph
 - `.venv/bin/pyright`: passed with zero errors or warnings.
 - `.venv/bin/pip-audit`: found no known third-party dependency vulnerabilities; the unpublished
   local `agent-os-opensource` distribution was the only skipped package.
+- `detect-secrets` found no candidate secrets in the built wheel or source distribution. Its
+  tracked-source scan reported only the documented non-secret Ollama placeholder and a synthetic
+  test value; direct inspection confirmed both classifications. Targeted path/key-pattern scans
+  also found no private task paths or credential values in either artifact.
 - A wheel built from the source distribution installed with plain pip in a clean Python 3.13
   environment outside the checkout. That installed CLI initialized a state-owned bundle and passed
   Omnigent spec validation. The same wheel correctly rejected unsupported Python 3.14.
