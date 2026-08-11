@@ -278,14 +278,33 @@ def build_prime_agent_run_plan(
         )
     role = inspect.getdoc(PrimeCoordinatorAgent) or ""
     task_context = build_task_context(store, task_id)
-    prompt = f"{role}\n\nAuthoritative Agent OS task context:\n\n{task_context}"
+    local_control = "/no_think\n" if identity.provider == "ollama" else ""
+    prompt = (
+        f"{local_control}{role}\n\nAuthoritative Agent OS task context:\n\n{task_context}"
+    )
+    provider_options = ("--provider", identity.provider)
+    if identity.model is not None:
+        provider_options += ("--model", identity.model)
+    local_options = (
+        ("--offline", "--thinking", "off") if identity.provider == "ollama" else ()
+    )
     return RunPlan(
         command=(
             executable,
+            "--print",
             "--mode",
             "json",
             "--cwd",
             str(task.workspace),
+            "--no-extensions",
+            "--no-skills",
+            "--skill",
+            "goal",
+            "--no-prompt-templates",
+            "--no-themes",
+            "--no-context-files",
+            *local_options,
+            *provider_options,
             "--goal",
             task.objective,
             "--goal-token-budget",

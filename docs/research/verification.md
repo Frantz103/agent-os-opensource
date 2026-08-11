@@ -66,7 +66,7 @@ are retained as dated experimental evidence and are not substitutes for the alph
 
 ## Automated checks
 
-- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 78 tests passed with 87% total
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 79 tests passed with 87% total
   statement coverage.
 - `.venv/bin/ruff check .`: passed.
 - `.venv/bin/pyright`: passed with zero errors or warnings.
@@ -143,7 +143,9 @@ as failure evidence, while an undeclared name or a child with the wrong tool/har
 a release-blocking failure.
 
 The added Prime tests verify its NOOA coordinator contract, exact bounded command construction,
-runtime attribution, positive autonomous limits, and that dry runs do not create attempts.
+provider/model propagation to the real CLI, offline startup for Ollama, runtime attribution,
+explicit loading of only Prime's bundled goal skill, positive autonomous limits, and that dry runs
+do not create attempts.
 The OpenCode extension test verifies the generated harness/model pins and that `doctor` fails loudly
 when an installed OpenCode version is outside Omnigent's supported range.
 
@@ -227,3 +229,10 @@ Prime Agent was cloned from live upstream at commit
 
 The bounded Prime JSON integration itself is covered by dry-run tests. A real Agent OS repository
 task through Prime remains subject to the task's egress authorization and independent review gate.
+
+On 2026-08-11, a disposable Ollama/Prime probe confirmed that Agent OS passes the real
+`ollama`/`qwen3:14b` identity, offline mode, print-mode exit contract, isolated resource flags, and
+bounded limits to Prime. A direct no-tool probe returned exactly `LOCAL_OK`. In task mode the model
+did edit the disposable fixture and pass its test, but it did not call Prime's internal
+`goal.complete()` before exhausting its token budget. Agent OS recorded the attempts as failed and
+did not create an approval. This is useful failure evidence, not a passing local end-to-end gate.

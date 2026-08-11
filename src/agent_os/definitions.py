@@ -78,7 +78,10 @@ class PrimeCoordinatorAgent(Agent):
     This runtime cannot write Agent OS review records directly. Finish with a concise evidence
     report containing the task id, changed files, exact verification commands/results, unresolved
     risks, and any acceptance criterion not proved. The host will record the attempt and route it
-    to independent review; never claim the task itself is complete.
+    to independent review; never claim the Agent OS task itself is complete. Prime's internal
+    execution goal is a separate lifecycle: after the objective and acceptance criteria are proved,
+    call ``await goal.complete()`` in IPython so the bounded Prime process can exit successfully.
+    Closing that internal goal does not approve or complete the durable Agent OS task.
     """
 
     async def orchestrate(self, task: TaskSpec) -> FinalOutcome:

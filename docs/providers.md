@@ -174,3 +174,45 @@ opencode run --pure --model ollama/qwen3:14b \
 
 Omnigent merges user-defined OpenCode providers into its isolated session configuration. Agent OS
 does not implement a second provider adapter, key store, or model router.
+
+## Local Ollama through Prime Agent
+
+Prime Agent can also use Ollama directly for a bounded persistent run. Add the public provider
+shape below to `~/.prime/agent/models.json`; the placeholder API key is required by Prime's schema
+but is not a credential and Ollama ignores it:
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [{ "id": "qwen3:14b" }]
+    }
+  }
+}
+```
+
+Then select the concrete provider and model on the Agent OS command:
+
+```bash
+uv run agent-os run tsk_... --runtime prime-agent \
+  --provider ollama --model qwen3:14b \
+  --token-budget 12000 --max-turns 6 --timeout-seconds 600
+```
+
+Agent OS passes both selections to Prime's actual CLI and records the same values on the attempt.
+For `ollama`, it also enables Prime's offline startup, requests non-thinking mode, and prefixes the
+task with Qwen's `/no_think` compatibility hint. Offline startup prevents update checks from turning
+a declared local inference run into external traffic. A model may ignore reasoning controls, so the
+token, turn, and wall-clock limits remain the authoritative bounds. Governed Prime launches disable
+ambient extensions,
+skills, prompt templates, themes, and automatic context-file discovery, then explicitly load only
+Prime's bundled `goal` skill so the bounded run can report completion through Prime's own goal API.
+Prime still inherits the invoking user's OS permissions; use a container, VM, or other enforced
+boundary for untrusted repositories.

@@ -65,10 +65,10 @@ Verified on 2026-08-11:
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
 | Antigravity pre-tool policy | 105 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1032 | `src/agent_os/runner.py` |
+| multi-runtime process launcher | 1051 | `src/agent_os/runner.py` |
 | operator task CLI | 249 | `src/agent_os/cli.py` |
 | gap measurement | 34 | `scripts/custom_loc.py` |
-| **Total** | **3,019** | |
+| **Total** | **3,038** | |
 
 Refresh with:
 

@@ -49,6 +49,11 @@ declared workspace. It is not an authentication, tenancy, or remote-execution se
   evidence. Reviews reject same-provider OpenAI implementation attempts before launch. Codex
   receives a unique mode-`0700` `CODEX_HOME` under private Agent OS state; a
   file-backed login is copied mode `0600` only for the child lifetime and removed with that home.
+- Prime Agent receives the concrete provider/model on its actual CLI invocation. Governed launches
+  disable ambient extensions, skills, prompt templates, themes, and automatic context-file
+  discovery, then explicitly load only Prime's bundled `goal` skill; local Ollama startup is
+  offline. Prime's built-in tools and kernels still inherit the invoking user account and therefore
+  remain outside an Agent OS containment boundary.
 - State and transcript paths are private to the local user.
 - Execution provider/model identity is persisted when work begins.
 - Approval must name the exact successful attempt and come from a different provider.

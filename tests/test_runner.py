@@ -402,20 +402,62 @@ def test_dry_run_builds_bounded_prime_agent_command_without_mutation(tmp_path: P
     assert result.runtime == "prime-agent"
     assert result.agent == "prime_coordinator"
     assert result.harness == "prime-agent"
-    assert result.command[:5] == (
+    assert result.command[:6] == (
         "/fake/prime-agent",
+        "--print",
         "--mode",
         "json",
         "--cwd",
         str(tmp_path),
     )
     assert result.command[result.command.index("--goal") + 1] == task.objective
+    assert result.command[result.command.index("--provider") + 1] == "openai"
+    assert result.command[result.command.index("--model") + 1] == "openai/gpt-5"
+    assert "--offline" not in result.command
+    assert "--no-extensions" in result.command
+    assert "--no-skills" in result.command
+    assert result.command[result.command.index("--skill") + 1] == "goal"
+    assert "--no-prompt-templates" in result.command
+    assert "--no-themes" in result.command
+    assert "--no-context-files" in result.command
     assert result.command[result.command.index("--goal-token-budget") + 1] == "12345"
     assert result.command[result.command.index("--autonomous-max-turns") + 1] == "7"
     assert result.command[result.command.index("--autonomous-timeout-ms") + 1] == "90000"
     assert task.id in result.prompt
-    assert "never claim the task itself is complete" in result.prompt
+    assert "never claim the Agent OS task itself is complete" in result.prompt
+    assert "await goal.complete()" in result.prompt
     assert store.list_attempts(task.id) == []
+
+
+def test_prime_agent_local_provider_is_explicit_and_offline(tmp_path: Path) -> None:
+    store = TaskStore(tmp_path / "state")
+    task = store.create_task(
+        title="Local run",
+        objective="Run through the declared local provider.",
+        workspace=tmp_path,
+        acceptance_criteria=["The local identity reaches the actual CLI"],
+    )
+
+    result = run_task(
+        store,
+        task.id,
+        tmp_path / "unused-bundle",
+        dry_run=True,
+        runtime="prime-agent",
+        prime_agent_command="/fake/prime-agent",
+        provider="ollama",
+        model="qwen3:14b",
+    )
+
+    assert isinstance(result, RunPlan)
+    assert result.provider == "ollama"
+    assert result.model == "qwen3:14b"
+    assert "--print" in result.command
+    assert result.command[result.command.index("--provider") + 1] == "ollama"
+    assert result.command[result.command.index("--model") + 1] == "qwen3:14b"
+    assert "--offline" in result.command
+    assert result.command[result.command.index("--thinking") + 1] == "off"
+    assert result.prompt.startswith("/no_think\n")
 
 
 @pytest.mark.parametrize("field", ["token_budget", "max_turns", "timeout_seconds"])
