@@ -14,7 +14,7 @@ are retained as dated experimental evidence and are not substitutes for the alph
 
 ## Automated checks
 
-- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 35 tests passed with 85% total
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 37 tests passed with 85% total
   statement coverage.
 - `.venv/bin/ruff check .`: passed.
 - `.venv/bin/pyright`: passed with zero errors or warnings.
