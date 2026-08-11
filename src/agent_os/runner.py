@@ -115,7 +115,14 @@ def build_run_plan(
     identity = execution_identity("coordinator")
     assert identity.provider is not None
     return RunPlan(
-        command=(executable, "run", str(Path(bundle_dir).resolve()), "-p", prompt),
+        command=(
+            executable,
+            "run",
+            str(Path(bundle_dir).resolve()),
+            "--no-session",
+            "-p",
+            prompt,
+        ),
         cwd=task.workspace,
         prompt=prompt,
         runtime="omnigent",

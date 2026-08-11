@@ -34,6 +34,7 @@ def test_dry_run_builds_omnigent_command_without_starting_process(tmp_path: Path
 
     assert isinstance(result, RunPlan)
     assert result.command[:2] == ("/fake/omnigent", "run")
+    assert "--no-session" in result.command
     assert result.runtime == "omnigent"
     assert task.id in result.prompt
     assert task.objective not in result.shell_command()

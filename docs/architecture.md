@@ -77,14 +77,15 @@ history and snapshots. None provides a project-level task record that binds an o
 criteria to work performed by several independent harness sessions. `TaskStore` fills only that
 gap, using SQLite tables for tasks, attempts, reviews, and append-only task events.
 
-The task database does not duplicate model transcripts. Agent OS stores only a transcript path;
-Omnigent remains the session/history system.
+The task database does not duplicate model transcripts. Agent OS writes streamed output to a
+private transcript file and stores only its path. Release-mode Omnigent runs use `--no-session`, so
+the invoking process owns the complete lifetime and no detached daemon can outlive the attempt.
 
 ## Context boundary
 
-Omnigent and Prime Agent handle context inside their conversations, including history, compaction,
-and resume. The custom context envelope handles a different boundary: starting a new session from
-durable task truth. It always
+Omnigent and Prime Agent handle context inside a conversation, including history and compaction;
+Prime additionally supports persistent resume. The custom context envelope handles the boundary
+between Agent OS attempts: starting a fresh session from durable task truth. It always
 preserves the objective, workspace, constraints, and acceptance criteria, then uses the remaining
 character budget for the most recent attempts and reviews.
 
