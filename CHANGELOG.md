@@ -20,6 +20,8 @@ changes.
   direct, ephemeral, provider-independent Codex review when Claude capacity is unavailable.
 - A direct Codex subscription runtime with the same workspace-write implementation baseline as
   Antigravity, separate from the read-only Codex review role.
+- A direct OpenCode fallback that can run local Ollama or a named cloud model without the
+  Claude-backed coordinator, while preserving provider attribution and independent review.
 
 ### Changed
 
@@ -55,3 +57,6 @@ changes.
 - Direct Antigravity work runs in the CLI sandbox under a state-owned agent and temporary,
   activation-scoped global `PreToolUse` plugin that denies ambient and outward tools before
   execution and is removed afterward.
+- Direct OpenCode work uses private per-task config/XDG state, a fixed deny policy for ambient and
+  outward tools, empty Git configuration, and terminal-stop validation. This policy is not an OS
+  sandbox; untrusted code still requires external containment.

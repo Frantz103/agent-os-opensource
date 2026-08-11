@@ -20,9 +20,10 @@ are retained as dated experimental evidence and are not substitutes for the alph
   `--sandbox`, an explicit Gemini model, and `--print=<prompt>` emitted a stable init event and
   terminal `SUCCESS` result. The `--print` option consumes its prompt value, so all other flags must
   precede it.
-- A disposable Agent OS integration changed exactly one fixture file, ran the requested pytest,
-  emitted terminal `SUCCESS`, recorded `builder_antigravity/antigravity-cli/google` with model
-  `gemini-3.6-flash-high`, and moved the durable task only to `needs_review`.
+- Disposable task `tsk_d16900653b66` changed exactly one fixture file, ran the requested pytest,
+  emitted terminal `SUCCESS`, and recorded implementation attempt `att_2757b91ae97b` as
+  `builder_antigravity/antigravity-cli/google` with model `gemini-3.6-flash-high`. It moved the
+  durable task only to `needs_review`.
 - The first integrated run also proved that custom-agent frontmatter alone does not reduce every
   main-agent built-in tool: `manage_task` remained advertised and was used. Two live probes then
   showed that the tested CLI did not discover a documented workspace-local hook in headless mode;
@@ -47,10 +48,13 @@ are retained as dated experimental evidence and are not substitutes for the alph
   two pytest invocations, recorded `builder_codex/codex/openai`, and moved the durable task only to
   `needs_review`. Its final diff was the single requested line and its temporary Codex home was
   absent after exit.
-- A fresh direct-review run inspected the exact Google attempt read-only, verified the single-file
-  diff and a passing pytest without modifying the fixture, recorded an evidence-bearing `approve`,
-  and moved the durable task from `needs_review` to `completed`. The recorded review names the exact
-  attempt, file bytes, diff, command, exit code, and expected read-only pytest cache warning.
+- Direct Codex/Sol review attempt `att_4963624c4ac9` inspected that exact Google attempt read-only,
+  verified the single-file diff and a passing pytest without modifying the fixture, and produced
+  review `rev_0b32f74f9f56` with an evidence-bearing `approve`. The task moved from `needs_review`
+  to `completed`. The recorded review names the exact attempt, file bytes, diff, command, exit code,
+  provider identity, transcript scope, and expected read-only pytest cache warning. The local
+  evidence directory retains the mode-`0600` database, stdout/stderr transcripts, review schema,
+  and structured result.
 - A failed process or zero exit without a structured terminal result fails the attempt and task.
   A successful implementation must still receive a different-provider review.
 
