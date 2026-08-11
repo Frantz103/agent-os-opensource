@@ -75,7 +75,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--token-budget", type=int, default=80_000, help="Prime Agent token budget")
     run.add_argument("--max-turns", type=int, default=12, help="Prime Agent turn limit")
     run.add_argument(
-        "--timeout-seconds", type=int, default=1_800, help="Prime Agent autonomous timeout"
+        "--timeout-seconds", type=int, default=1_800, help="Wall-clock runtime timeout"
     )
     return parser
 

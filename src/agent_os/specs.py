@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,14 @@ import yaml
 
 from agent_os.definitions import BuilderAgent, CoordinatorAgent, PlannerAgent, ReviewerAgent
 from agent_os.execution import execution_identity
+
+LEDGER_TOOL_NAMES = {
+    "get_task_context",
+    "start_attempt",
+    "finish_attempt",
+    "record_review",
+    "complete_task",
+}
 
 
 class LiteralString(str):
@@ -112,103 +121,8 @@ def _guardrails() -> dict[str, Any]:
     }
 
 
-def _function_tools() -> dict[str, Any]:
-    def string_array() -> dict[str, Any]:
-        return {"type": "array", "items": {"type": "string"}}
-
-    return {
-        "get_task_context": {
-            "type": "function",
-            "description": "Load the authoritative task contract and prior evidence.",
-            "callable": "agent_os.tools.get_task_context",
-            "parameters": {
-                "type": "object",
-                "properties": {"task_id": {"type": "string"}},
-                "required": ["task_id"],
-            },
-        },
-        "start_attempt": {
-            "type": "function",
-            "description": "Create an attributed attempt before child-agent dispatch.",
-            "callable": "agent_os.tools.start_attempt",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string"},
-                    "agent": {"type": "string"},
-                    "work_item": {"type": "string", "default": "primary"},
-                },
-                "required": ["task_id", "agent"],
-            },
-        },
-        "finish_attempt": {
-            "type": "function",
-            "description": "Finalize a child attempt with status, summary, and evidence.",
-            "callable": "agent_os.tools.finish_attempt",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "attempt_id": {"type": "string"},
-                    "status": {
-                        "type": "string",
-                        "enum": ["succeeded", "failed", "cancelled"],
-                    },
-                    "summary": {"type": "string"},
-                    "evidence": string_array(),
-                },
-                "required": ["attempt_id", "status", "summary"],
-            },
-        },
-        "record_review": {
-            "type": "function",
-            "description": "Persist an independent review verdict and its evidence.",
-            "callable": "agent_os.tools.record_review",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string"},
-                    "attempt_id": {"type": "string"},
-                    "reviewer": {"type": "string"},
-                    "verdict": {
-                        "type": "string",
-                        "enum": ["approve", "request_changes", "blocked"],
-                    },
-                    "summary": {"type": "string"},
-                    "issues": string_array(),
-                    "evidence": string_array(),
-                },
-                "required": [
-                    "task_id",
-                    "attempt_id",
-                    "reviewer",
-                    "verdict",
-                    "summary",
-                ],
-            },
-        },
-        "complete_task": {
-            "type": "function",
-            "description": "Close a reviewed task with a truthful terminal outcome.",
-            "callable": "agent_os.tools.complete_task",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string"},
-                    "status": {
-                        "type": "string",
-                        "enum": ["completed", "blocked", "failed"],
-                    },
-                    "summary": {"type": "string"},
-                },
-                "required": ["task_id", "status", "summary"],
-            },
-        },
-    }
-
-
 def coordinator_config() -> dict[str, Any]:
     tools: dict[str, Any] = {"agents": [variant.name for variant in VARIANTS]}
-    tools.update(_function_tools())
     return {
         "spec_version": 1,
         "name": "agent_os_coordinator",
@@ -274,9 +188,75 @@ def _dump(data: dict[str, Any]) -> str:
     return "# Generated from src/agent_os/definitions.py; do not edit by hand.\n" + body
 
 
+def _ledger_tools_source() -> str:
+    return textwrap.dedent(
+        '''\
+        """Generated Agent OS ledger tools for Omnigent runtime discovery."""
+
+        from omnigent_client.tools import tool
+
+        from agent_os import tools as ledger
+
+
+        @tool
+        def get_task_context(task_id: str) -> str:
+            """Load the authoritative task contract and prior evidence."""
+            return ledger.get_task_context(task_id)
+
+
+        @tool
+        def start_attempt(task_id: str, agent: str, work_item: str = "primary") -> dict[str, str]:
+            """Create an attributed attempt before child-agent dispatch."""
+            return ledger.start_attempt(task_id, agent, work_item)
+
+
+        @tool
+        def finish_attempt(
+            attempt_id: str,
+            status: str,
+            summary: str,
+            evidence: list[str] | None = None,
+        ) -> dict[str, str]:
+            """Finalize a child attempt with status, summary, and evidence."""
+            return ledger.finish_attempt(attempt_id, status, summary, evidence)
+
+
+        @tool
+        def record_review(
+            task_id: str,
+            attempt_id: str,
+            reviewer: str,
+            verdict: str,
+            summary: str,
+            issues: list[str] | None = None,
+            evidence: list[str] | None = None,
+        ) -> dict[str, str]:
+            """Persist an independent review verdict and its evidence."""
+            return ledger.record_review(
+                task_id,
+                reviewer,
+                verdict,
+                summary,
+                attempt_id,
+                issues,
+                evidence,
+            )
+
+
+        @tool
+        def complete_task(task_id: str, status: str, summary: str) -> dict[str, str]:
+            """Close a reviewed task with a truthful terminal outcome."""
+            return ledger.complete_task(task_id, status, summary)
+        '''
+    )
+
+
 def expected_specs(bundle_dir: Path | str) -> dict[Path, str]:
     bundle = Path(bundle_dir)
-    specs = {bundle / "config.yaml": _dump(coordinator_config())}
+    specs = {
+        bundle / "config.yaml": _dump(coordinator_config()),
+        bundle / "tools" / "python" / "task_ledger.py": _ledger_tools_source(),
+    }
     for variant in VARIANTS:
         specs[bundle / "agents" / variant.name / "config.yaml"] = _dump(variant_config(variant))
     return specs
@@ -301,7 +281,13 @@ def check_specs(bundle_dir: Path | str) -> list[Path]:
 
 
 def validate_bundle(bundle_dir: Path | str) -> None:
-    """Ask Omnigent's own loader to validate the emitted bundle."""
+    """Validate the bundle and confirm every ledger tool reaches the runtime registry."""
     from omnigent.spec import load
+    from omnigent.tools.manager import ToolManager
 
-    load(Path(bundle_dir).resolve())
+    bundle = Path(bundle_dir).resolve()
+    spec = load(bundle)
+    manager = ToolManager(spec, workdir=bundle, sandbox_enabled=False)
+    missing = LEDGER_TOOL_NAMES.difference(manager.get_tool_names())
+    if missing:
+        raise RuntimeError(f"generated bundle is missing runtime ledger tools: {sorted(missing)}")

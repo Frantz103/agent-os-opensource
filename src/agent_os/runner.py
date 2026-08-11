@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -216,6 +217,8 @@ def run_task(
     provider: str | None = None,
     model: str | None = None,
 ) -> RunPlan | int:
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
     if runtime == "omnigent":
         plan = build_run_plan(store, task_id, bundle_dir, omnigent_command=omnigent_command)
     elif runtime == "prime-agent":
@@ -263,7 +266,8 @@ def run_task(
         environment.setdefault("PRIME_AGENT_TELEMETRY", "0")
 
     process: subprocess.Popen[str] | None = None
-    runtime_failure: str | None = None
+    runtime_failures: list[str] = []
+    reader_errors: list[BaseException] = []
     try:
         with ExitStack() as stack:
             transcript = stack.enter_context(_open_private_text(transcript_path))
@@ -283,13 +287,36 @@ def run_task(
                 start_new_session=os.name == "posix",
             )
             store.set_attempt_process(attempt.id, process.pid)
-            assert process.stdout is not None
-            for line in process.stdout:
-                sys.stdout.write(line)
-                sys.stdout.flush()
-                transcript.write(line)
-                runtime_failure = runtime_failure or _runtime_failure(line)
-            return_code = process.wait()
+            stdout = process.stdout
+            assert stdout is not None
+
+            def stream_output() -> None:
+                try:
+                    for line in stdout:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                        transcript.write(line)
+                        failure = _runtime_failure(line)
+                        if failure is not None and not runtime_failures:
+                            runtime_failures.append(failure)
+                except BaseException as error:
+                    reader_errors.append(error)
+
+            reader = threading.Thread(target=stream_output, name=f"agent-os-{attempt.id}")
+            reader.start()
+            try:
+                return_code = process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired as error:
+                _terminate_process(process)
+                raise TimeoutError(
+                    f"{plan.runtime} process exceeded {timeout_seconds} seconds"
+                ) from error
+            finally:
+                reader.join(timeout=5)
+            if reader.is_alive():
+                raise RuntimeError("runtime output reader did not stop")
+            if reader_errors:
+                raise RuntimeError(f"runtime output reader failed: {reader_errors[0]}")
     except BaseException as error:
         if process is not None and process.poll() is None:
             _terminate_process(process)
@@ -304,6 +331,7 @@ def run_task(
             store.transition(task_id, TaskStatus.FAILED, reason=f"{plan.runtime} process exception")
         raise
 
+    runtime_failure = runtime_failures[0] if runtime_failures else None
     if runtime_failure is not None and return_code == 0:
         return_code = 1
     status = AttemptStatus.SUCCEEDED if return_code == 0 else AttemptStatus.FAILED

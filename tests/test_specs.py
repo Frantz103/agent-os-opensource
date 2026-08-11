@@ -4,20 +4,22 @@ from pathlib import Path
 
 import yaml
 
-from agent_os.specs import VARIANTS, check_specs, sync_specs, validate_bundle
+from agent_os.specs import LEDGER_TOOL_NAMES, VARIANTS, check_specs, sync_specs, validate_bundle
 
 
 def test_compiler_emits_multi_harness_bundle_from_definitions(tmp_path: Path) -> None:
     bundle = tmp_path / "coordinator"
     written = sync_specs(bundle)
 
-    assert len(written) == 1 + len(VARIANTS)
+    assert len(written) == 2 + len(VARIANTS)
     assert check_specs(bundle) == []
 
     root = yaml.safe_load((bundle / "config.yaml").read_text())
     assert root["executor"]["config"]["harness"] == "claude-sdk"
     assert root["tools"]["agents"] == [variant.name for variant in VARIANTS]
-    assert root["tools"]["record_review"]["callable"] == "agent_os.tools.record_review"
+    assert "record_review" not in root["tools"]
+    ledger_source = (bundle / "tools" / "python" / "task_ledger.py").read_text()
+    assert all(f"def {name}(" in ledger_source for name in LEDGER_TOOL_NAMES)
 
     harnesses = {}
     models = {}
@@ -34,15 +36,6 @@ def test_compiler_emits_multi_harness_bundle_from_definitions(tmp_path: Path) ->
     assert models["builder_opencode"] == "openai/gpt-5"
     assert harnesses["builder_ollama"] == "opencode-native"
     assert models["builder_ollama"] == "ollama/qwen3:14b"
-    assert root["tools"]["record_review"]["parameters"]["required"] == [
-        "task_id",
-        "attempt_id",
-        "reviewer",
-        "verdict",
-        "summary",
-    ]
-
-
 def test_omnigent_accepts_generated_bundle(tmp_path: Path) -> None:
     bundle = tmp_path / "coordinator"
     sync_specs(bundle)

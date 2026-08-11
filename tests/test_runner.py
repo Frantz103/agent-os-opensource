@@ -220,3 +220,32 @@ def test_zero_exit_runtime_authentication_failure_fails_attempt(tmp_path: Path) 
     attempt = store.list_attempts(task.id)[0]
     assert attempt.status.value == "failed"
     assert "expired test session" in attempt.summary
+
+
+def test_omnigent_runtime_timeout_terminates_and_records_failure(tmp_path: Path) -> None:
+    fake_runtime = tmp_path / "slow-omnigent"
+    fake_runtime.write_text("#!/bin/sh\nsleep 30\n")
+    fake_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Bound runtime",
+        objective="Terminate a stalled process.",
+        workspace=workspace,
+        acceptance_criteria=["Timeout is recorded"],
+    )
+
+    with pytest.raises(TimeoutError, match="exceeded 1 seconds"):
+        run_task(
+            store,
+            task.id,
+            tmp_path / "bundle",
+            omnigent_command=str(fake_runtime),
+            timeout_seconds=1,
+        )
+
+    assert store.get_task(task.id).status is TaskStatus.FAILED
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "failed"
+    assert "TimeoutError" in attempt.summary

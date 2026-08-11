@@ -45,12 +45,12 @@ Verified on 2026-08-10:
 | typed task contracts | 98 | `src/agent_os/models.py` |
 | domain task persistence | 759 | `src/agent_os/store.py` |
 | cross-session context envelope | 62 | `src/agent_os/context.py` |
-| NOOA-to-Omnigent compiler | 265 | `src/agent_os/specs.py` |
+| NOOA-to-Omnigent compiler | 239 | `src/agent_os/specs.py` |
 | Omnigent task tool bridge | 70 | `src/agent_os/tools.py` |
-| multi-runtime process launcher | 322 | `src/agent_os/runner.py` |
+| multi-runtime process launcher | 355 | `src/agent_os/runner.py` |
 | operator task CLI | 213 | `src/agent_os/cli.py` |
 | gap measurement | 32 | `scripts/custom_loc.py` |
-| **Total** | **1,951** | |
+| **Total** | **1,958** | |
 
 Refresh with:
 

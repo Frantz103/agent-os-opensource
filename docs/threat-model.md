@@ -36,6 +36,9 @@ declared workspace. It is not an authentication, tenancy, or remote-execution se
 
 - A compromised dependency or harness running outside the worker sandbox can access the invoking
   account's files and explicitly allowed credentials.
+- Omnigent 0.8.2 may materialize an injected provider key in a child-process argument. Treat process
+  listings and diagnostic captures as sensitive, and prefer short-lived credentials until this
+  upstream behavior is mitigated.
 - Model providers receive the prompts and repository context sent through their harnesses.
 - Local SQLite state is not tamper-proof against the owning operating-system user.
 - Tool-command policies are defense in depth and cannot replace OS containment.
