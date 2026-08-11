@@ -8,16 +8,73 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_FROZEN: "1"
+
 jobs:
-  verify:
+  test:
+    name: test (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Omnigent Linux sandbox dependency
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run pytest --cov=agent_os --cov-report=term-missing
+
+  quality:
+    name: quality and dependency audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Omnigent Linux sandbox dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.13"
           enable-cache: true
-      - run: uv sync --locked --dev
-      - run: uv run pytest
+      - run: uv sync --dev
       - run: uv run ruff check .
-      - run: uv run agent-os spec check
+      - run: uv run pyright
+      - run: uv run agent-os --bundle agents/coordinator spec check
+      - run: uv run pip-audit --cache-dir /tmp/pip-audit-cache
+
+  package:
+    name: wheel installation smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Omnigent Linux sandbox dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv build
+      - name: Install wheel outside the source checkout
+        shell: bash
+        run: |
+          wheel="$(find dist -name '*.whl' -print -quit)"
+          uv venv /tmp/agent-os-wheel-venv --python 3.13
+          uv pip install --python /tmp/agent-os-wheel-venv/bin/python "$wheel"
+          smoke_dir="$(mktemp -d)"
+          cd "$smoke_dir"
+          /tmp/agent-os-wheel-venv/bin/agent-os --state-dir state init
+          /tmp/agent-os-wheel-venv/bin/agent-os --state-dir state spec check
+          test -f state/bundles/coordinator/config.yaml

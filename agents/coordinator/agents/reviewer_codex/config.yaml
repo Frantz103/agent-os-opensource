@@ -2,13 +2,14 @@
 spec_version: 1
 name: reviewer_codex
 description: Read-only Codex reviewer
+skills: none
 executor:
   type: omnigent
   config:
-    harness: codex-native
-    yolo: true
+    harness: codex
+  model: gpt-5.6-sol
 prompt: |-
-  You are `reviewer_codex`, running through the `codex-native` harness.
+  You are `reviewer_codex`, running through the `codex` harness.
 
   You are an independent, read-only reviewer on a different harness from the implementer.
 
@@ -35,4 +36,5 @@ guardrails:
       function:
         path: omnigent.inner.nessie.policies.blast_radius
         arguments:
-          gate_pushes: false
+          gate_pushes: true
+          risky_action: DENY

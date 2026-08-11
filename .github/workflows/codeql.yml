@@ -1,0 +1,60 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "31 6 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
+        with:
+          languages: python
+      - id: analyze
+        uses: github/codeql-action/analyze@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
+        with:
+          output: ${{ runner.temp }}/codeql-results
+          # Code scanning uploads are unavailable on a private personal repository.
+          # Keep analysis mandatory now and publish the same SARIF after the repo is public.
+          upload: ${{ github.event.repository.private && 'never' || 'always' }}
+          upload-database: false
+      - name: Fail on CodeQL findings
+        env:
+          SARIF_OUTPUT: ${{ steps.analyze.outputs.sarif-output }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          sarif_dir = Path(os.environ["SARIF_OUTPUT"])
+          files = sorted(sarif_dir.glob("*.sarif"))
+          if not files:
+              raise SystemExit(f"CodeQL produced no SARIF files in {sarif_dir}")
+
+          findings = []
+          for path in files:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              for run in payload.get("runs", []):
+                  findings.extend(run.get("results", []))
+
+          if findings:
+              for finding in findings:
+                  rule = finding.get("ruleId", "unknown-rule")
+                  message = finding.get("message", {}).get("text", "CodeQL finding")
+                  level = finding.get("level", "warning")
+                  print(f"{level}: CodeQL {rule}: {message}")
+              raise SystemExit(f"CodeQL reported {len(findings)} finding(s)")
+
+          print(f"CodeQL produced {len(files)} SARIF file(s) with no findings")
+          PY

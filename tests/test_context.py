@@ -17,7 +17,9 @@ def test_context_preserves_contract_and_bounds_old_evidence(tmp_path: Path) -> N
     )
     store.transition(task.id, TaskStatus.RUNNING)
     for index in range(6):
-        attempt = store.start_attempt(task.id, agent=f"builder-{index}", harness="codex-native")
+        attempt = store.start_attempt(
+            task.id, agent="builder_codex", work_item=f"work-{index}"
+        )
         store.finish_attempt(
             attempt.id,
             status=AttemptStatus.SUCCEEDED,

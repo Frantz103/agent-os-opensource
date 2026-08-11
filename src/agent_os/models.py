@@ -30,6 +30,11 @@ class AttemptStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AttemptKind(StrEnum):
+    COORDINATOR = "coordinator"
+    IMPLEMENTATION = "implementation"
+
+
 class TaskSpec(BaseModel):
     id: str
     title: str = Field(min_length=1, max_length=200)
@@ -54,7 +59,12 @@ class TaskSpec(BaseModel):
 class WorkItem(BaseModel):
     id: str
     description: str
-    owner_role: Literal["builder_claude", "builder_codex", "builder_opencode", "builder_ollama"]
+    owner_role: Literal[
+        "builder_claude",
+        "builder_codex",
+        "builder_opencode",
+        "builder_ollama",
+    ]
     depends_on: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
 
@@ -94,10 +104,15 @@ class AttemptRecord(BaseModel):
     task_id: str
     agent: str
     harness: str
+    provider: str
+    model: str | None = None
+    kind: AttemptKind = AttemptKind.IMPLEMENTATION
+    work_item: str = "primary"
     status: AttemptStatus
     summary: str = ""
     evidence: list[str] = Field(default_factory=list)
     transcript_path: str | None = None
+    pid: int | None = None
     started_at: datetime
     finished_at: datetime | None = None
 
@@ -108,6 +123,7 @@ class ReviewRecord(BaseModel):
     attempt_id: str | None = None
     reviewer: str
     harness: str
+    provider: str
     verdict: Literal["approve", "request_changes", "blocked"]
     summary: str
     issues: list[str] = Field(default_factory=list)

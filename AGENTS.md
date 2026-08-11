@@ -3,7 +3,8 @@
 This repository is an experiment in using framework capability before adding infrastructure.
 
 - Keep NOOA classes in `src/agent_os/definitions.py` as the source of agent role definitions.
-- Keep generated Omnigent bundles under `agents/`; regenerate them with `agent-os spec sync`.
+- Keep generated Omnigent bundles under `agents/`; regenerate this repository's bundle with
+  `agent-os --bundle agents/coordinator spec sync`.
 - Do not hand-edit generated `agents/**/config.yaml` files.
 - Before adding orchestration, persistence, context, review, sandbox, or harness code, verify that
   NOOA or Omnigent does not already provide it.

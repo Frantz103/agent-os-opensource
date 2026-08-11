@@ -6,11 +6,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SEAMS = {
+    "execution identity registry": ["src/agent_os/execution.py"],
     "typed task contracts": ["src/agent_os/models.py"],
     "domain task persistence": ["src/agent_os/store.py"],
     "cross-session context envelope": ["src/agent_os/context.py"],
     "NOOA-to-Omnigent compiler": ["src/agent_os/specs.py"],
     "Omnigent task tool bridge": ["src/agent_os/tools.py"],
+    "governed child-dispatch policy": ["src/agent_os/policies.py"],
+    "Antigravity pre-tool policy": ["src/agent_os/antigravity_policy.py"],
     "multi-runtime process launcher": ["src/agent_os/runner.py"],
     "operator task CLI": ["src/agent_os/cli.py"],
     "gap measurement": ["scripts/custom_loc.py"],

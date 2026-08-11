@@ -47,7 +47,10 @@ Workspace: {task.workspace}
         evidence = "\n".join(f"  - {item}" for item in attempt.evidence) or "  - None"
         history_parts.append(
             f"### Attempt {attempt.id}\n"
-            f"- Agent/harness: {attempt.agent} / {attempt.harness}\n"
+            f"- Agent/harness/provider: {attempt.agent} / {attempt.harness} / "
+            f"{attempt.provider}\n"
+            f"- Kind/work item: {attempt.kind.value} / {attempt.work_item}\n"
+            f"- Model: {attempt.model or 'runtime default'}\n"
             f"- Status: {attempt.status.value}\n"
             f"- Summary: {attempt.summary or 'No summary yet'}\n"
             f"- Evidence:\n{evidence}"
@@ -56,7 +59,9 @@ Workspace: {task.workspace}
         issues = "\n".join(f"  - {item}" for item in review.issues) or "  - None"
         history_parts.append(
             f"### Review {review.id}\n"
-            f"- Reviewer/harness: {review.reviewer} / {review.harness}\n"
+            f"- Attempt: {review.attempt_id or 'legacy unbound review'}\n"
+            f"- Reviewer/harness/provider: {review.reviewer} / {review.harness} / "
+            f"{review.provider}\n"
             f"- Verdict: {review.verdict}\n"
             f"- Summary: {review.summary}\n"
             f"- Issues:\n{issues}"

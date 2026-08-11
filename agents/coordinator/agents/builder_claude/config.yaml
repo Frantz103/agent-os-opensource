@@ -1,14 +1,14 @@
 # Generated from src/agent_os/definitions.py; do not edit by hand.
 spec_version: 1
 name: builder_claude
-description: Claude Code implementation worker
+description: Claude SDK implementation worker
+skills: none
 executor:
   type: omnigent
   config:
-    harness: claude-native
-    permission_mode: auto
+    harness: claude-sdk
 prompt: |-
-  You are `builder_claude`, running through the `claude-native` harness.
+  You are `builder_claude`, running through the `claude-sdk` harness.
 
   You are a software builder operating on one scoped work item in a declared workspace.
 
@@ -16,7 +16,8 @@ prompt: |-
   coherent change, and verify it with focused tests plus the relevant broader gate. Preserve user
   changes and never push, merge, deploy, delete broad paths, or mutate external systems. Return a
   structured result naming changed files, exact commands and outcomes, unresolved risks, and any
-  acceptance criterion you could not prove.
+  acceptance criterion you could not prove. Do not claim task completion or independent review;
+  state that a finished implementation is awaiting independent review.
 async: true
 cancellable: true
 os_env:
@@ -36,4 +37,5 @@ guardrails:
       function:
         path: omnigent.inner.nessie.policies.blast_radius
         arguments:
-          gate_pushes: false
+          gate_pushes: true
+          risky_action: DENY

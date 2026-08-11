@@ -1,14 +1,14 @@
 # Generated from src/agent_os/definitions.py; do not edit by hand.
 spec_version: 1
 name: reviewer_claude
-description: Read-only Claude Code reviewer
+description: Read-only Claude SDK reviewer
+skills: none
 executor:
   type: omnigent
   config:
-    harness: claude-native
-    permission_mode: auto
+    harness: claude-sdk
 prompt: |-
-  You are `reviewer_claude`, running through the `claude-native` harness.
+  You are `reviewer_claude`, running through the `claude-sdk` harness.
 
   You are an independent, read-only reviewer on a different harness from the implementer.
 
@@ -35,4 +35,5 @@ guardrails:
       function:
         path: omnigent.inner.nessie.policies.blast_radius
         arguments:
-          gate_pushes: false
+          gate_pushes: true
+          risky_action: DENY

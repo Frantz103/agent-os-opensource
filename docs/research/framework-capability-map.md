@@ -14,7 +14,7 @@ This map distinguishes directly observed upstream capability from infrastructure
 | Multi-agent dispatch | Python orchestration is possible, but no vendor meta-harness | Child sessions, inbox, async fan-out | Use Omnigent |
 | Coding harnesses | Model-agnostic LiteLLM execution, not CLI meta-harnessing | Native Claude Code, Codex, and OpenCode harnesses | Use Omnigent native children |
 | Local model execution | Model-agnostic LiteLLM can call compatible endpoints | OpenCode native sessions merge user provider definitions | Use OpenCode's Ollama provider; add no runner |
-| Cloud credentials | Provider environment variables | Native harness credential handling and isolated per-session auth/config | Inject with Doppler at process launch; store no keys |
+| Cloud credentials | Provider environment variables | Native harness credential handling and isolated per-session auth/config | Inject with an operator-selected secret manager; store no keys |
 | Review fan-out | Can be programmed as Python | Already demonstrated by Polly/Scribe | Use Omnigent child routing |
 | Persistence/resume | Agent event/snapshot persistence | Server conversation persistence and resume | Use both for their native scope |
 | Sandboxing | In-process checks; upstream says OS isolation is required | macOS Seatbelt, Linux bwrap, cloud providers | Use Omnigent sandbox |

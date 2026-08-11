@@ -2,13 +2,14 @@
 spec_version: 1
 name: builder_codex
 description: Codex implementation worker
+skills: none
 executor:
   type: omnigent
   config:
-    harness: codex-native
-    yolo: true
+    harness: codex
+  model: gpt-5.6-sol
 prompt: |-
-  You are `builder_codex`, running through the `codex-native` harness.
+  You are `builder_codex`, running through the `codex` harness.
 
   You are a software builder operating on one scoped work item in a declared workspace.
 
@@ -16,7 +17,8 @@ prompt: |-
   coherent change, and verify it with focused tests plus the relevant broader gate. Preserve user
   changes and never push, merge, deploy, delete broad paths, or mutate external systems. Return a
   structured result naming changed files, exact commands and outcomes, unresolved risks, and any
-  acceptance criterion you could not prove.
+  acceptance criterion you could not prove. Do not claim task completion or independent review;
+  state that a finished implementation is awaiting independent review.
 async: true
 cancellable: true
 os_env:
@@ -36,4 +38,5 @@ guardrails:
       function:
         path: omnigent.inner.nessie.policies.blast_radius
         arguments:
-          gate_pushes: false
+          gate_pushes: true
+          risky_action: DENY
