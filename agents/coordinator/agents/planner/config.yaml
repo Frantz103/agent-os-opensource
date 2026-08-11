@@ -1,7 +1,8 @@
 # Generated from src/agent_os/definitions.py; do not edit by hand.
 spec_version: 1
 name: planner
-description: Read-only task planner
+description: Read-only Claude task planner
+skills: none
 executor:
   type: omnigent
   config:

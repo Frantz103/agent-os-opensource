@@ -58,3 +58,41 @@ def test_doctor_fails_loudly_for_incompatible_installed_opencode(
 
     assert cli._doctor(bundle) == 1
     assert "opencode   INCOMPATIBLE unsupported 1.18.4" in capsys.readouterr().out
+
+
+def test_run_keyboard_interrupt_exits_cleanly(monkeypatch, tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task = store.create_task(
+        title="Interrupt cleanly",
+        objective="Avoid a Python traceback after governed cleanup.",
+        workspace=tmp_path,
+        acceptance_criteria=["CLI returns the conventional interrupt code"],
+    )
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "run_task", interrupt)
+
+    assert cli.main(["--state-dir", str(state_dir), "run", task.id]) == 130
+    assert capsys.readouterr().err == "interrupted\n"
+
+
+def test_run_timeout_exits_cleanly(monkeypatch, tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task = store.create_task(
+        title="Time out cleanly",
+        objective="Avoid a Python traceback after governed timeout cleanup.",
+        workspace=tmp_path,
+        acceptance_criteria=["CLI reports the bounded timeout"],
+    )
+
+    def time_out(*args, **kwargs):
+        raise TimeoutError("omnigent process exceeded 1 seconds")
+
+    monkeypatch.setattr(cli, "run_task", time_out)
+
+    assert cli.main(["--state-dir", str(state_dir), "run", task.id]) == 2
+    assert capsys.readouterr().err == "error: omnigent process exceeded 1 seconds\n"

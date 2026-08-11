@@ -10,6 +10,10 @@ from agent_os.models import AttemptKind
 
 ExecutionRole = Literal["coordinator", "planner", "builder", "reviewer"]
 
+CODEX_BUILDER_MODEL = "gpt-5.6-sol"
+CODEX_REVIEWER_MODEL = "gpt-5.6-sol"
+ANTIGRAVITY_MODEL = "gemini-3.6-flash-high"
+
 
 @dataclass(frozen=True)
 class ExecutionIdentity:
@@ -58,14 +62,22 @@ _PROFILES: dict[str, ExecutionIdentity] = {
     "builder_claude": ExecutionIdentity(
         agent="builder_claude",
         role="builder",
-        harness="claude-native",
+        harness="claude-sdk",
         provider="anthropic",
     ),
     "builder_codex": ExecutionIdentity(
         agent="builder_codex",
         role="builder",
-        harness="codex-native",
+        harness="codex",
         provider="openai",
+        model=CODEX_BUILDER_MODEL,
+    ),
+    "builder_antigravity": ExecutionIdentity(
+        agent="builder_antigravity",
+        role="builder",
+        harness="antigravity-cli",
+        provider="google",
+        model=ANTIGRAVITY_MODEL,
     ),
     "builder_opencode": ExecutionIdentity(
         agent="builder_opencode",
@@ -84,17 +96,24 @@ _PROFILES: dict[str, ExecutionIdentity] = {
     "reviewer_claude": ExecutionIdentity(
         agent="reviewer_claude",
         role="reviewer",
-        harness="claude-native",
+        harness="claude-sdk",
         provider="anthropic",
         kind=AttemptKind.COORDINATOR,
     ),
     "reviewer_codex": ExecutionIdentity(
         agent="reviewer_codex",
         role="reviewer",
-        harness="codex-native",
+        harness="codex",
         provider="openai",
+        model=CODEX_REVIEWER_MODEL,
         kind=AttemptKind.COORDINATOR,
     ),
+}
+
+_MODEL_ENV_BY_AGENT = {
+    "builder_codex": "AGENT_OS_CODEX_BUILDER_MODEL",
+    "reviewer_codex": "AGENT_OS_CODEX_REVIEWER_MODEL",
+    "builder_antigravity": "AGENT_OS_ANTIGRAVITY_MODEL",
 }
 
 
@@ -110,7 +129,12 @@ def execution_identity(
     except KeyError as error:
         raise ValueError(f"unknown execution agent: {agent}") from error
 
-    if agent == "builder_opencode":
+    model_env = _MODEL_ENV_BY_AGENT.get(agent)
+    if model_env is not None:
+        configured_model = model or os.environ.get(model_env) or identity.model
+        assert configured_model is not None
+        identity = replace(identity, model=configured_model)
+    elif agent == "builder_opencode":
         configured_model = model or os.environ.get("AGENT_OS_OPENCODE_MODEL") or identity.model
         assert configured_model is not None
         identity = replace(

@@ -15,6 +15,7 @@ from agent_os.execution import execution_identity
 
 LEDGER_TOOL_NAMES = {
     "get_task_context",
+    "get_workspace_diff",
     "start_attempt",
     "finish_attempt",
     "record_review",
@@ -47,7 +48,12 @@ class AgentVariant:
     provider: str | None = None
 
 
-def _variant(name: str, definition: type, access: str, description: str) -> AgentVariant:
+def _variant(
+    name: str,
+    definition: type,
+    access: str,
+    description: str,
+) -> AgentVariant:
     identity = execution_identity(name)
     return AgentVariant(
         name=name,
@@ -61,10 +67,8 @@ def _variant(name: str, definition: type, access: str, description: str) -> Agen
 
 
 VARIANTS = (
-    _variant("planner", PlannerAgent, "read_only", "Read-only task planner"),
-    _variant(
-        "builder_claude", BuilderAgent, "read_write", "Claude Code implementation worker"
-    ),
+    _variant("planner", PlannerAgent, "read_only", "Read-only Claude task planner"),
+    _variant("builder_claude", BuilderAgent, "read_write", "Claude SDK implementation worker"),
     _variant("builder_codex", BuilderAgent, "read_write", "Codex implementation worker"),
     _variant(
         "builder_opencode",
@@ -78,19 +82,13 @@ VARIANTS = (
         "read_write",
         "Local Ollama implementation worker through OpenCode",
     ),
-    _variant(
-        "reviewer_claude", ReviewerAgent, "read_only", "Read-only Claude Code reviewer"
-    ),
+    _variant("reviewer_claude", ReviewerAgent, "read_only", "Read-only Claude SDK reviewer"),
     _variant("reviewer_codex", ReviewerAgent, "read_only", "Read-only Codex reviewer"),
 )
 
 
 def _executor(harness: str, model: str | None = None) -> dict[str, Any]:
     config: dict[str, Any] = {"harness": harness}
-    if harness == "claude-native":
-        config["permission_mode"] = "auto"
-    if harness == "codex-native":
-        config["yolo"] = True
     executor: dict[str, Any] = {"type": "omnigent", "config": config}
     if model is not None:
         executor["model"] = model
@@ -127,11 +125,13 @@ def coordinator_config() -> dict[str, Any]:
         "spec_version": 1,
         "name": "agent_os_coordinator",
         "description": "NOOA-defined coordinator using Omnigent child sessions and policies",
+        "skills": "none",
         "executor": _executor("claude-sdk"),
         "prompt": LiteralString(inspect.getdoc(CoordinatorAgent) or ""),
         "async": True,
         "cancellable": True,
         "tools": tools,
+        "os_env": _os_env("read_only"),
         "guardrails": {
             "ask_timeout": 86400,
             "policies": {
@@ -154,6 +154,12 @@ def coordinator_config() -> dict[str, Any]:
                         },
                     },
                 },
+                "attempt_before_dispatch": {
+                    "type": "function",
+                    "function": {
+                        "path": "agent_os.policies.attempt_before_dispatch",
+                    },
+                },
             },
         },
     }
@@ -165,6 +171,7 @@ def variant_config(variant: AgentVariant) -> dict[str, Any]:
         "spec_version": 1,
         "name": variant.name,
         "description": variant.description,
+        "skills": "none",
         "executor": _executor(variant.harness, variant.model),
         "prompt": LiteralString(
             f"You are `{variant.name}`, running through the "
@@ -188,75 +195,90 @@ def _dump(data: dict[str, Any]) -> str:
     return "# Generated from src/agent_os/definitions.py; do not edit by hand.\n" + body
 
 
-def _ledger_tools_source() -> str:
-    return textwrap.dedent(
+def _ledger_tool_sources() -> dict[str, str]:
+    header = textwrap.dedent(
         '''\
-        """Generated Agent OS ledger tools for Omnigent runtime discovery."""
+        """Generated Agent OS ledger tool for Omnigent runtime discovery."""
 
         from omnigent_client.tools import tool
 
         from agent_os import tools as ledger
 
 
-        @tool
-        def get_task_context(task_id: str) -> str:
-            """Load the authoritative task contract and prior evidence."""
-            return ledger.get_task_context(task_id)
-
-
-        @tool
-        def start_attempt(task_id: str, agent: str, work_item: str = "primary") -> dict[str, str]:
-            """Create an attributed attempt before child-agent dispatch."""
-            return ledger.start_attempt(task_id, agent, work_item)
-
-
-        @tool
-        def finish_attempt(
-            attempt_id: str,
-            status: str,
-            summary: str,
-            evidence: list[str] | None = None,
-        ) -> dict[str, str]:
-            """Finalize a child attempt with status, summary, and evidence."""
-            return ledger.finish_attempt(attempt_id, status, summary, evidence)
-
-
-        @tool
-        def record_review(
-            task_id: str,
-            attempt_id: str,
-            reviewer: str,
-            verdict: str,
-            summary: str,
-            issues: list[str] | None = None,
-            evidence: list[str] | None = None,
-        ) -> dict[str, str]:
-            """Persist an independent review verdict and its evidence."""
-            return ledger.record_review(
-                task_id,
-                reviewer,
-                verdict,
-                summary,
-                attempt_id,
-                issues,
-                evidence,
-            )
-
-
-        @tool
-        def complete_task(task_id: str, status: str, summary: str) -> dict[str, str]:
-            """Close a reviewed task with a truthful terminal outcome."""
-            return ledger.complete_task(task_id, status, summary)
         '''
     )
+    bodies = {
+        "get_task_context": '''\
+            @tool
+            def get_task_context(task_id: str) -> str:
+                """Load the authoritative task contract and prior evidence."""
+                return ledger.get_task_context(task_id)
+        ''',
+        "get_workspace_diff": '''\
+            @tool
+            def get_workspace_diff(task_id: str) -> str:
+                """Collect bounded status and diff evidence for independent review."""
+                return ledger.get_workspace_diff(task_id)
+        ''',
+        "start_attempt": '''\
+            @tool
+            def start_attempt(
+                task_id: str, agent: str, work_item: str = "primary"
+            ) -> dict[str, str]:
+                """Create an attributed attempt before child-agent dispatch."""
+                return ledger.start_attempt(task_id, agent, work_item)
+        ''',
+        "finish_attempt": '''\
+            @tool
+            def finish_attempt(
+                attempt_id: str,
+                status: str,
+                summary: str,
+                child_task_status: str,
+                evidence: list[str] | None = None,
+            ) -> dict[str, str]:
+                """Finalize an attempt after its child task reaches a terminal status."""
+                return ledger.finish_attempt(
+                    attempt_id, status, summary, child_task_status, evidence
+                )
+        ''',
+        "record_review": '''\
+            @tool
+            def record_review(
+                task_id: str,
+                attempt_id: str,
+                reviewer: str,
+                verdict: str,
+                summary: str,
+                issues: list[str] | None = None,
+                evidence: list[str] | None = None,
+            ) -> dict[str, str]:
+                """Persist an independent review verdict and its evidence."""
+                return ledger.record_review(
+                    task_id,
+                    reviewer,
+                    verdict,
+                    summary,
+                    attempt_id,
+                    issues,
+                    evidence,
+                )
+        ''',
+        "complete_task": '''\
+            @tool
+            def complete_task(task_id: str, status: str, summary: str) -> dict[str, str]:
+                """Close a reviewed task with a truthful terminal outcome."""
+                return ledger.complete_task(task_id, status, summary)
+        ''',
+    }
+    return {name: header + textwrap.dedent(body) for name, body in bodies.items()}
 
 
 def expected_specs(bundle_dir: Path | str) -> dict[Path, str]:
     bundle = Path(bundle_dir)
-    specs = {
-        bundle / "config.yaml": _dump(coordinator_config()),
-        bundle / "tools" / "python" / "task_ledger.py": _ledger_tools_source(),
-    }
+    specs = {bundle / "config.yaml": _dump(coordinator_config())}
+    for name, source in _ledger_tool_sources().items():
+        specs[bundle / "tools" / "python" / f"{name}.py"] = source
     for variant in VARIANTS:
         specs[bundle / "agents" / variant.name / "config.yaml"] = _dump(variant_config(variant))
     return specs
@@ -269,6 +291,10 @@ def sync_specs(bundle_dir: Path | str) -> list[Path]:
         if not path.exists() or path.read_text() != content:
             path.write_text(content)
             written.append(path)
+    legacy = Path(bundle_dir) / "tools" / "python" / "task_ledger.py"
+    if legacy.exists():
+        legacy.unlink()
+        written.append(legacy)
     return written
 
 
@@ -277,6 +303,9 @@ def check_specs(bundle_dir: Path | str) -> list[Path]:
     for path, content in expected_specs(bundle_dir).items():
         if not path.exists() or path.read_text() != content:
             drifted.append(path)
+    legacy = Path(bundle_dir) / "tools" / "python" / "task_ledger.py"
+    if legacy.exists():
+        drifted.append(legacy)
     return drifted
 
 

@@ -1,7 +1,58 @@
 # Verification record
 
-Current release-candidate checks were run locally on 2026-08-10. Earlier framework probes below
+Current release-candidate checks were run locally on 2026-08-11. Earlier framework probes below
 are retained as dated experimental evidence and are not substitutes for the alpha release gate.
+
+## Codex model refresh and Antigravity direct runtime (2026-08-11)
+
+- Active Codex implementation/review defaults now use `gpt-5.6-sol`; Terra and Luna remain explicit
+  overrides. Historical `gpt-5.4` results below remain dated evidence, not current configuration.
+- Omnigent 0.8.2's documented Antigravity harness targets the `google-antigravity` SDK, whose
+  published authentication contract requires `GEMINI_API_KEY` or Vertex credentials. It does not
+  consume an Antigravity CLI subscription session. The earlier Omnigent-native experiment remains a
+  failed compatibility result: it rejected a custom coordinator bundle and did not preserve the
+  declared child specification in a disposable integrated run.
+- Antigravity CLI documentation and changelog verification established that `agy>=1.1.6` supports
+  structured `stream-json` output, custom Markdown agents, native sandboxing, and `PreToolUse` hooks.
+  Agent OS therefore implements Antigravity as a direct Google-backed implementation runtime rather
+  than an Omnigent variant.
+- A correctly ordered headless smoke using `--output-format stream-json`, `--mode plan`,
+  `--sandbox`, an explicit Gemini model, and `--print=<prompt>` emitted a stable init event and
+  terminal `SUCCESS` result. The `--print` option consumes its prompt value, so all other flags must
+  precede it.
+- A disposable Agent OS integration changed exactly one fixture file, ran the requested pytest,
+  emitted terminal `SUCCESS`, recorded `builder_antigravity/antigravity-cli/google` with model
+  `gemini-3.6-flash-high`, and moved the durable task only to `needs_review`.
+- The first integrated run also proved that custom-agent frontmatter alone does not reduce every
+  main-agent built-in tool: `manage_task` remained advertised and was used. Two live probes then
+  showed that the tested CLI did not discover a documented workspace-local hook in headless mode;
+  `search_web` executed. The supported runtime now installs a temporary activation-scoped global
+  plugin for the child-process lifetime. A subsequent live probe produced an `error_message` whose
+  reason named the Agent OS policy denial, did not execute the web tool, changed no workspace file,
+  and removed the plugin after exit. Regression tests cover plugin collision/cleanup, allowed
+  workspace operations, network/MCP tools, destructive commands, and outside paths.
+- Three attempts to use Omnigent 0.8.2 with a root Codex coordinator entered its tmux-based
+  interactive startup path, produced no useful headless output, and were terminated within the
+  declared bounds. The failed attempts remained recorded and did not approve the implementation.
+- Agent OS replaced that unsupported path with direct `codex exec --ephemeral` worker and review
+  roles. The worker uses workspace-write; the reviewer remains read-only. Both ignore user
+  config/rules, disable approval escalation, receive their task envelope through stdin, and use a
+  private per-attempt `CODEX_HOME` that is destroyed after exit.
+- A no-escalation probe inside the already Seatbelt-confined development host proved that the
+  private home fixed Codex app-server startup, then failed when macOS rejected a second nested
+  `sandbox-exec`. This is an outer-host nesting limit: the production launcher retains Codex's own
+  sandbox instead of silently bypassing it. The bounded live probes therefore ran with permission
+  at the outer development layer while retaining the inner Codex policies.
+- A fresh direct-worker run with `gpt-5.6-sol` changed only `message.txt`, verified exact bytes and
+  two pytest invocations, recorded `builder_codex/codex/openai`, and moved the durable task only to
+  `needs_review`. Its final diff was the single requested line and its temporary Codex home was
+  absent after exit.
+- A fresh direct-review run inspected the exact Google attempt read-only, verified the single-file
+  diff and a passing pytest without modifying the fixture, recorded an evidence-bearing `approve`,
+  and moved the durable task from `needs_review` to `completed`. The recorded review names the exact
+  attempt, file bytes, diff, command, exit code, and expected read-only pytest cache warning.
+- A failed process or zero exit without a structured terminal result fails the attempt and task.
+  A successful implementation must still receive a different-provider review.
 
 ## Dependency and framework surface
 
@@ -9,12 +60,13 @@ are retained as dated experimental evidence and are not substitutes for the alph
 - Installed framework versions: `nooa==0.0.8`, `omnigent==0.8.2`.
 - `agent-os doctor` found the repository Omnigent CLI plus compatible OpenCode 1.17.20, Ollama,
   Claude Code, Codex, and Prime Agent CLIs.
-- `agent-os spec check` confirmed generated files match the NOOA definitions.
+- `agent-os --bundle agents/coordinator spec check` confirmed the checked-in generated files match
+  the NOOA definitions.
 - Omnigent's own `omnigent.spec.load()` accepted the complete generated agent-image directory.
 
 ## Automated checks
 
-- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 39 tests passed with 85% total
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 78 tests passed with 87% total
   statement coverage.
 - `.venv/bin/ruff check .`: passed.
 - `.venv/bin/pyright`: passed with zero errors or warnings.
@@ -38,16 +90,43 @@ implementation-attempt record. The stalled process was interrupted after seven m
 terminated the complete process group and recorded the failure. A wall-clock timeout now applies to
 both supported runtimes, with regression coverage. Agent OS now strips `ANTHROPIC_API_KEY` from the
 Omnigent environment even when an operator names it in the custom allowlist, and bundle validation
-checks the real runtime tool registry. The exposed credential still must be rotated before another
-provider run or public release.
+checks the real runtime tool registry. The exposed credential still must be rotated before that key
+is used again or the repository is released publicly.
 
 A fresh local-provider release probe after restoring Claude OAuth reached Omnigent coordination but
 the Claude subscription then reported its weekly usage limit. Omnigent surfaced that result as an
 error while still exiting zero; the untouched workspace tests remained failing, no builder attempt
 or review was recorded, and the host incorrectly moved the task to `needs_review`. Agent OS now
 recognizes the observed usage-limit marker as fatal and records the coordinator attempt and task as
-failed. The local end-to-end release gate therefore remains unpassed; the cloud gate was not
-started.
+failed.
+
+Subsequent bounded cloud probes exercised the hardened lifecycle and harness boundaries:
+
+- A Claude SDK builder completed a real one-file implementation, reported terminal child status,
+  and produced two passing tests. The coordinator independently verified the diff and evidence.
+- The original `codex-native` builder and reviewer both failed with `Codex native bridge state is
+  missing`. The task stayed blocked because the same-provider Claude reviewer was correctly denied.
+- Agent OS therefore moved its Codex builder/reviewer variants to Omnigent's supported `codex`
+  subprocess harness, pinned to `gpt-5.4`, with native shell and web search disabled. A direct run of
+  the generated builder completed the same one-file task and passed both tests in about one minute,
+  proving the replacement harness and sandboxed dynamic-tool path.
+- A first direct run of the replacement Codex reviewer remained read-only and passed both tests, but
+  correctly blocked because the macOS sandbox denied `.git` evidence. Agent OS now supplies bounded,
+  workspace-scoped status/diff evidence through a hardened host function instead of exposing
+  repository history to a child. The collector returned only `M slug.py` and the current patch in a
+  live probe. Given that evidence, a fresh Codex reviewer independently read the source/tests, passed
+  both tests, and returned `approve` without editing, reading `.git`, or using network tools.
+  Automated tests cover command hardening and output bounds; the integrated review round trip is
+  still pending.
+- A fresh integrated run reached a recorded `builder_codex/codex/gpt-5.4` attempt, but the Claude
+  coordinator then exhausted its weekly subscription allocation and Omnigent terminated the child.
+  Agent OS closed both running attempts and failed the task; the fixture remained untouched.
+
+At that historical checkpoint, the individual Claude SDK and Codex subprocess worker paths were
+live-proven but the final different-provider round trip was still pending. The 2026-08-11
+Antigravity-to-Codex run above now supplies that end-to-end evidence without Claude. The previously
+exposed Anthropic credential remains deferred by operator decision and must be resolved before a
+public release that could disclose it.
 
 That probe also emitted Omnigent's `did not resolve in the parent spec` warning for the declared
 `planner` child. Direct runner-log inspection showed this instance was a known Omnigent 0.8.2 false

@@ -68,6 +68,22 @@ def test_invalid_transition_is_rejected(tmp_path: Path) -> None:
         store.transition(task.id, TaskStatus.COMPLETED)
 
 
+@pytest.mark.parametrize("target", [TaskStatus.BLOCKED, TaskStatus.FAILED])
+def test_terminal_task_transition_rejects_running_implementation(
+    tmp_path: Path, target: TaskStatus
+) -> None:
+    store = TaskStore(tmp_path / "state")
+    task = make_task(store, tmp_path)
+    store.transition(task.id, TaskStatus.RUNNING)
+    attempt = store.start_attempt(task.id, agent="builder_ollama")
+
+    with pytest.raises(ValueError, match="running implementation"):
+        store.transition(task.id, target, reason="child looked slow")
+
+    assert store.get_task(task.id).status is TaskStatus.RUNNING
+    assert store.get_attempt(attempt.id).status is AttemptStatus.RUNNING
+
+
 def test_review_must_use_a_different_vendor(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "state")
     task = make_task(store, tmp_path)

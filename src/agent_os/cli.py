@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,7 +18,15 @@ from omnigent.opencode_native_app_server import (
 from agent_os import __version__
 from agent_os.context import build_task_context
 from agent_os.models import TaskStatus
-from agent_os.runner import RunPlan, find_omnigent_cli, find_prime_agent_cli, run_task
+from agent_os.runner import (
+    RunPlan,
+    check_antigravity_version,
+    find_antigravity_cli,
+    find_omnigent_cli,
+    find_prime_agent_cli,
+    resolve_antigravity_version,
+    run_task,
+)
 from agent_os.specs import VARIANTS, check_specs, sync_specs, validate_bundle
 from agent_os.store import TaskStore
 
@@ -61,12 +70,20 @@ def _parser() -> argparse.ArgumentParser:
 
     context = sub.add_parser("context", help="Render the task context envelope")
     context.add_argument("task_id")
-    run = sub.add_parser("run", help="Execute a task through Omnigent or Prime Agent")
+    run = sub.add_parser(
+        "run", help="Execute through Omnigent, Codex, Antigravity, or Prime Agent"
+    )
     run.add_argument("task_id")
     run.add_argument("--dry-run", action="store_true")
-    run.add_argument("--runtime", choices=["omnigent", "prime-agent"], default="omnigent")
+    run.add_argument(
+        "--runtime",
+        choices=["omnigent", "antigravity", "codex", "codex-review", "prime-agent"],
+        default="omnigent",
+    )
     run.add_argument("--provider", help="Prime Agent intelligence provider (required for Prime)")
-    run.add_argument("--model", help="Prime Agent model identifier recorded for attribution")
+    run.add_argument(
+        "--model", help="Prime Agent, Antigravity, or Codex model identifier"
+    )
     run.add_argument(
         "--show-prompt",
         action="store_true",
@@ -75,7 +92,10 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--token-budget", type=int, default=80_000, help="Prime Agent token budget")
     run.add_argument("--max-turns", type=int, default=12, help="Prime Agent turn limit")
     run.add_argument(
-        "--timeout-seconds", type=int, default=1_800, help="Wall-clock runtime timeout"
+        "--timeout-seconds",
+        type=int,
+        default=1_800,
+        help="Wall-clock timeout (Omnigent 0.8.2 maximum: 1800 seconds)",
     )
     return parser
 
@@ -121,6 +141,19 @@ def _doctor(bundle: Path) -> int:
     else:
         print(f"{'opencode':10} OPTIONAL MISSING")
 
+    antigravity = find_antigravity_cli()
+    if antigravity:
+        try:
+            version = resolve_antigravity_version(antigravity)
+            check_antigravity_version(version)
+            rendered = ".".join(str(part) for part in version)
+            print(f"{'antigravity':10} OK {antigravity} ({rendered})")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            ok = False
+            print(f"{'antigravity':10} INCOMPATIBLE {error}")
+    else:
+        print(f"{'antigravity':10} OPTIONAL MISSING")
+
     optional_checks = {
         "prime-agent": find_prime_agent_cli(),
         "ollama": shutil.which("ollama"),
@@ -154,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "agents":
             print("coordinator\tclaude-sdk\tNOOA CoordinatorAgent")
             print("prime_coordinator\tprime-agent\tNOOA PrimeCoordinatorAgent")
+            print("builder_antigravity\tantigravity-cli\tNOOA BuilderAgent")
             for variant in VARIANTS:
                 print(f"{variant.name}\t{variant.harness}\tNOOA {variant.definition.__name__}")
             return 0
@@ -231,9 +265,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"command: {result.shell_command(reveal_context=args.show_prompt)}")
                 return 0
             return result
-    except (KeyError, ValueError, RuntimeError) as error:
+    except (KeyError, ValueError, RuntimeError, TimeoutError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
 
     return 1
 

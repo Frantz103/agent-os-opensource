@@ -59,7 +59,12 @@ class TaskSpec(BaseModel):
 class WorkItem(BaseModel):
     id: str
     description: str
-    owner_role: Literal["builder_claude", "builder_codex", "builder_opencode", "builder_ollama"]
+    owner_role: Literal[
+        "builder_claude",
+        "builder_codex",
+        "builder_opencode",
+        "builder_ollama",
+    ]
     depends_on: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
 

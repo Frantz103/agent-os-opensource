@@ -2,6 +2,7 @@
 spec_version: 1
 name: builder_ollama
 description: Local Ollama implementation worker through OpenCode
+skills: none
 executor:
   type: omnigent
   config:
@@ -16,7 +17,8 @@ prompt: |-
   coherent change, and verify it with focused tests plus the relevant broader gate. Preserve user
   changes and never push, merge, deploy, delete broad paths, or mutate external systems. Return a
   structured result naming changed files, exact commands and outcomes, unresolved risks, and any
-  acceptance criterion you could not prove.
+  acceptance criterion you could not prove. Do not claim task completion or independent review;
+  state that a finished implementation is awaiting independent review.
 async: true
 cancellable: true
 os_env:

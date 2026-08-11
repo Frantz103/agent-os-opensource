@@ -339,6 +339,19 @@ class TaskStore:
             raise ValueError(f"invalid task transition: {current.status.value} -> {target.value}")
         timestamp = _now()
         with self._connect() as connection:
+            if target in {TaskStatus.BLOCKED, TaskStatus.FAILED}:
+                running = connection.execute(
+                    """
+                    SELECT id FROM attempts
+                    WHERE task_id = ? AND kind = 'implementation' AND status = 'running'
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                if running is not None:
+                    raise ValueError(
+                        "cannot close a task with running implementation attempts"
+                    )
             cursor = connection.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
                 (target.value, timestamp, task_id, current.status.value),

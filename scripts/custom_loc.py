@@ -12,6 +12,8 @@ SEAMS = {
     "cross-session context envelope": ["src/agent_os/context.py"],
     "NOOA-to-Omnigent compiler": ["src/agent_os/specs.py"],
     "Omnigent task tool bridge": ["src/agent_os/tools.py"],
+    "governed child-dispatch policy": ["src/agent_os/policies.py"],
+    "Antigravity pre-tool policy": ["src/agent_os/antigravity_policy.py"],
     "multi-runtime process launcher": ["src/agent_os/runner.py"],
     "operator task CLI": ["src/agent_os/cli.py"],
     "gap measurement": ["scripts/custom_loc.py"],
