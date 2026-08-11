@@ -49,6 +49,16 @@ recognizes the observed usage-limit marker as fatal and records the coordinator 
 failed. The local end-to-end release gate therefore remains unpassed; the cloud gate was not
 started.
 
+That probe also emitted Omnigent's `did not resolve in the parent spec` warning for the declared
+`planner` child. Direct runner-log inspection showed this instance was a known Omnigent 0.8.2 false
+positive rather than a parent-spec substitution: session creation had already cached the selected
+child, and the turn path searched that child for itself a second time. The child's exposed tool set
+was the planner tool set, not the coordinator's task-ledger surface. Upstream
+[PR #4435](https://github.com/omnigent-ai/omnigent/pull/4435) documents and tests the same sequence;
+it remains open, so 0.8.2 may still print the misleading warning. This warning alone is not accepted
+as failure evidence, while an undeclared name or a child with the wrong tool/harness identity remains
+a release-blocking failure.
+
 The added Prime tests verify its NOOA coordinator contract, exact bounded command construction,
 runtime attribution, positive autonomous limits, and that dry runs do not create attempts.
 The OpenCode extension test verifies the generated harness/model pins and that `doctor` fails loudly
