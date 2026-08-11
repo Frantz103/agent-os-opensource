@@ -79,6 +79,10 @@ are retained as dated experimental evidence and are not substitutes for the alph
   task state transitions, schema migration and backup, crash reconciliation, concurrent work-item
   exclusion, attempt and review immutability, context bounding, host function tools, provider-aware
   review enforcement, the atomic closure gate, CLI reconciliation, and no-process dry runs.
+- The first exact-head CI run after the direct-runtime expansion passed both macOS/Python jobs but
+  exposed a missing Ubuntu system prerequisite: Omnigent refused to validate its Linux sandbox
+  without `bwrap`. The workflow now installs Bubblewrap in every Linux test, quality, and installed-
+  wheel job; disabling sandbox validation was not used as a workaround.
 
 A bounded local release probe also proved that Omnigent can emit an authentication failure while
 exiting zero. Agent OS now recognizes the explicit fatal launcher message, records a failed attempt,

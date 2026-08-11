@@ -67,6 +67,12 @@ releases studied here: NOOA 0.0.8 and Omnigent 0.8.2. Prime Agent is installed s
 evaluation used version 0.7.1. The direct Antigravity path requires `agy>=1.1.6` and an existing CLI
 login.
 
+On Linux, Omnigent's sandbox also requires Bubblewrap:
+
+```bash
+sudo apt-get install bubblewrap
+```
+
 ```bash
 uv sync --dev
 uv run agent-os init
