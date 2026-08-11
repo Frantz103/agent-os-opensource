@@ -43,9 +43,15 @@ cloud + local Ollama             daemon + IPython + RLM
 - An optional bounded Prime Agent JSON runtime with persistent goals and autonomous limits.
 - Generated-spec drift checking and validation through Omnigent's own loader.
 
+## Status
+
+Agent OS `0.1.0a1` is a local-first public alpha for bounded repository work. It is not a hosted,
+multi-tenant, or unattended production control plane. The task ledger, sandboxed Omnigent path,
+provider-independent review gate, and bounded Prime Agent path are the supported surface.
+
 ## Install
 
-Python 3.12-3.14, `uv`, Claude Code, and Codex are expected. OpenCode and Ollama are optional
+Python 3.12-3.13, `uv`, Claude Code, and Codex are expected. OpenCode and Ollama are optional
 additional environments. Framework versions are pinned to the stable releases studied here: NOOA
 0.0.8 and Omnigent 0.8.2. Prime Agent is optional and installed separately; the evaluation used
 version 0.7.1.
@@ -65,12 +71,13 @@ npm install --global opencode-ai@1.17.20
 Omnigent can reuse existing Claude Code and Codex subscription logins. If neither is configured,
 run `uv run omnigent setup`.
 
-OpenCode cloud runs use the direct `openai/gpt-5.6-terra` model. Keep its key out of the repository
-and inject it from the existing Doppler staging config:
+OpenCode cloud runs default to `openai/gpt-5`. Select another public OpenCode provider/model before
+generating the bundle with `AGENT_OS_OPENCODE_MODEL`, and inject only that provider's credential:
 
 ```bash
-doppler run --project web-data-projets --config stg -- \
-  uv run agent-os run tsk_...
+export AGENT_OS_OPENCODE_MODEL="openai/gpt-5"
+export OPENAI_API_KEY="..."  # preferably injected by your secret manager
+uv run agent-os init
 ```
 
 The local `builder_ollama` variant is pinned to `ollama/qwen3:14b` and does not need a cloud key.
@@ -107,6 +114,7 @@ Or use Prime Agent's persistent runtime with explicit limits:
 
 ```bash
 uv run agent-os run tsk_... --runtime prime-agent \
+  --provider openai --model openai/gpt-5 \
   --token-budget 80000 --max-turns 12 --timeout-seconds 1800
 ```
 
@@ -152,13 +160,13 @@ See also:
 - [Verification record](docs/research/verification.md)
 - [Prime Agent evaluation](docs/research/prime-agent-evaluation.md)
 
-## Status
+## Safety and support
 
-This is an early, local-first experiment over two alpha/research frameworks. It is useful for
-bounded repository tasks, but it is not a production control plane. In particular, it does not yet
-provide distributed task leases, approval delegation, a hosted multi-tenant control plane, or a
-protected merge/deploy workflow. Prime Agent's local workers recover, but that is distinct from
-remote worker recovery or sandboxed execution.
+Read the [threat model](docs/threat-model.md), [data-handling contract](docs/data-handling.md),
+[security policy](SECURITY.md), and [support policy](SUPPORT.md) before enabling a live model run.
+Agent OS does not provide distributed leases, approval delegation, multi-tenant authentication, or
+a protected merge/deploy workflow. Prime Agent inherits the invoking user's permissions and is not
+an OS sandbox.
 
 ## License
 

@@ -6,6 +6,7 @@ YAML, docs, and the NOOA role definitions themselves are excluded.
 
 | Manual seam | What was missing | Why it was necessary | Code |
 | --- | --- | --- | --- |
+| Execution identity registry | The frameworks identify harnesses, but the product must enforce reviewer independence by actual provider and model | Provider, model, and harness must remain separate, allowlisted facts at every execution and review boundary | `src/agent_os/execution.py` |
 | Typed task contracts | Neither framework defines this product's task, attempt, evidence, or review record | A stable acceptance contract must survive and be inspectable outside one model conversation | `src/agent_os/models.py` |
 | Domain task persistence | NOOA persists one agent's events/snapshots; Omnigent persists sessions/conversations | Real work needs a project-level unit of work joining several harness sessions to acceptance and review | `src/agent_os/store.py` |
 | Cross-session context envelope | Both frameworks manage context within their own agent/session boundary | A fresh coordinator session needs durable task truth and bounded prior evidence without copying whole transcripts | `src/agent_os/context.py` |
@@ -15,42 +16,41 @@ YAML, docs, and the NOOA role definitions themselves are excluded.
 | Operator task CLI | Omnigent's CLI is session-oriented and NOOA's CLI is agent/eval-oriented | Operators need create/list/show/context/run commands for the explicit task model | `src/agent_os/cli.py` |
 | Gap measurement | Neither framework measures application-owned glue | The experiment requires current, reproducible code-size evidence for every manual seam | `scripts/custom_loc.py` |
 
-The Prime phase reused the existing launcher and CLI rather than adding a daemon, scheduler, RPC
-stack, message bus, context compactor, kernel manager, or refinement store. It added 113 measured
-source lines: 95 in the generalized launcher and 18 in the operator CLI. No existing seam can yet be
-deleted without losing the task acceptance/review contract or Omnigent's sandboxed cross-vendor
-harness path.
+The Prime integration reuses the existing launcher and CLI rather than adding a daemon, scheduler,
+RPC stack, message bus, context compactor, kernel manager, or refinement store. No existing seam can
+yet be deleted without losing the task acceptance/review contract or Omnigent's sandboxed
+cross-provider harness path.
 
-The OpenCode/Ollama phase adds only declarative variants and one optional model field to the
-existing compiler. Omnigent already supplies `opencode-native`; OpenCode already supplies the
-OpenAI-compatible Ollama provider; Doppler already supplies launch-time secrets. Consequently this
-phase adds no custom harness adapter, model client, provider router, secret loader, daemon, or
-persistence component. The measured compiler count below includes the small declarative addition.
-The live probe also exposed that `sandbox.type: auto` passes Omnigent's schema but is not a runtime
-backend in 0.8.2. Removing that value lets Omnigent select its built-in platform backend, fixing the
-shared compiler configuration without adding custom sandbox code.
+The OpenCode/Ollama integration remains declarative. Omnigent supplies `opencode-native`; OpenCode
+supplies its OpenAI-compatible Ollama provider; the operator supplies launch-time secrets. The live
+probe exposed that `sandbox.type: auto` passes Omnigent's schema but is not a runtime backend in
+0.8.2. Removing that value lets Omnigent select its built-in platform backend without custom
+sandbox code.
 
-This phase adds 41 measured source lines: 20 in the compiler for variant/model selection and 21 in
-the existing operator CLI. The CLI addition is necessary because Omnigent enforces its OpenCode
-version range only when a native session starts; Agent OS reuses Omnigent's own version resolver and
-validator to expose that incompatibility during `doctor` instead. No parallel compatibility logic
-was written.
+The distribution also pins compatible prerelease floors for Omnigent's three OpenTelemetry
+instrumentation dependencies. Omnigent declares them as `>=0,<1`, while the published versions use
+beta version numbers that plain pip otherwise excludes. This is a packaging constraint only; no
+telemetry adapter or instrumentation implementation is maintained here.
+
+Agent OS reuses Omnigent's own OpenCode version resolver and validator to expose compatibility
+failures during `doctor`. No parallel compatibility logic is maintained here.
 
 ## Current measured size
 
-Verified on 2026-08-09:
+Verified on 2026-08-10:
 
 | Manual seam | Source LOC | Paths |
 | --- | ---: | --- |
-| typed task contracts | 89 | `src/agent_os/models.py` |
-| domain task persistence | 432 | `src/agent_os/store.py` |
-| cross-session context envelope | 57 | `src/agent_os/context.py` |
-| NOOA-to-Omnigent compiler | 271 | `src/agent_os/specs.py` |
-| Omnigent task tool bridge | 75 | `src/agent_os/tools.py` |
-| multi-runtime process launcher | 205 | `src/agent_os/runner.py` |
-| operator task CLI | 183 | `src/agent_os/cli.py` |
-| gap measurement | 31 | `scripts/custom_loc.py` |
-| **Total** | **1,343** | |
+| execution identity registry | 130 | `src/agent_os/execution.py` |
+| typed task contracts | 98 | `src/agent_os/models.py` |
+| domain task persistence | 759 | `src/agent_os/store.py` |
+| cross-session context envelope | 62 | `src/agent_os/context.py` |
+| NOOA-to-Omnigent compiler | 265 | `src/agent_os/specs.py` |
+| Omnigent task tool bridge | 70 | `src/agent_os/tools.py` |
+| multi-runtime process launcher | 305 | `src/agent_os/runner.py` |
+| operator task CLI | 213 | `src/agent_os/cli.py` |
+| gap measurement | 32 | `scripts/custom_loc.py` |
+| **Total** | **1,934** | |
 
 Refresh with:
 

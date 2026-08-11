@@ -31,9 +31,16 @@ def test_compiler_emits_multi_harness_bundle_from_definitions(tmp_path: Path) ->
     assert harnesses["builder_claude"] == "claude-native"
     assert harnesses["builder_codex"] == "codex-native"
     assert harnesses["builder_opencode"] == "opencode-native"
-    assert models["builder_opencode"] == "openai/gpt-5.6-terra"
+    assert models["builder_opencode"] == "openai/gpt-5"
     assert harnesses["builder_ollama"] == "opencode-native"
     assert models["builder_ollama"] == "ollama/qwen3:14b"
+    assert root["tools"]["record_review"]["parameters"]["required"] == [
+        "task_id",
+        "attempt_id",
+        "reviewer",
+        "verdict",
+        "summary",
+    ]
 
 
 def test_omnigent_accepts_generated_bundle(tmp_path: Path) -> None:

@@ -1,45 +1,49 @@
 # Execution providers
 
-Agent OS separates the coding harness from the model provider. The two new execution choices both
-reuse Omnigent's `opencode-native` harness:
+Agent OS records the coding harness, model, and intelligence provider separately. Provider identity
+is part of the review gate: an implementation cannot be approved by a reviewer backed by the same
+provider.
 
-| Agent | Harness | Intelligence provider | Credential path |
+| Agent | Harness | Default model/provider | Credential path |
 | --- | --- | --- | --- |
-| `builder_opencode` | OpenCode | `openai/gpt-5.6-terra` | Doppler `web-data-projets/stg` |
+| `builder_opencode` | OpenCode | `openai/gpt-5` | `OPENAI_API_KEY` or OpenCode auth |
 | `builder_ollama` | OpenCode | `ollama/qwen3:14b` | local Ollama; no cloud key |
 
-Only the builder inference is local. The current Omnigent coordinator and planner still use
-`claude-sdk`, and the independent review uses Claude or Codex. Do not describe a complete Agent OS
-run as offline or private merely because `builder_ollama` was selected.
+Only builder inference is local when `builder_ollama` is selected. The default coordinator and
+planner still use Claude, and independent review uses Claude or Codex. Do not describe a complete
+run as offline merely because its builder was local.
 
-## Cloud execution through Doppler
+## Cloud execution
 
-The staging config is the non-production config containing the full provider set. Launch Agent OS
-under Doppler so the native OpenCode server inherits `OPENAI_API_KEY` without writing it to a file:
+Choose any provider/model supported by your OpenCode installation before generating the bundle:
 
 ```bash
-doppler run --project web-data-projets --config stg -- \
-  uv run agent-os run tsk_...
+export AGENT_OS_OPENCODE_MODEL="openai/gpt-5"
+export OPENAI_API_KEY="..."  # inject with your secret manager; never commit it
+uv run agent-os init
 ```
 
-The verified secret names in `stg` are `ANTHROPIC_API_KEY`, `CEREBRAS_API_KEY`,
-`GEMINI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OPENAI_API_KEY`, and
-`OPENROUTER_API_KEY`. This document intentionally contains no values. Omnigent 0.8.2 passes the
-`OPENAI_`, `ANTHROPIC_`, `GEMINI_`, and `GOOGLE_` families into its isolated native OpenCode
-server. The pinned cloud variant therefore uses the direct OpenAI provider rather than requiring a
-custom OpenRouter environment bridge.
+Agent OS passes only a small runtime environment allowlist. The built-in cloud path permits
+`OPENAI_API_KEY` and `ANTHROPIC_API_KEY`; additional variable names must be explicitly named in
+`AGENT_OS_ALLOWED_ENV`:
+
+```bash
+export AGENT_OS_ALLOWED_ENV="CUSTOM_PROVIDER_API_KEY"
+```
+
+This variable contains names, not secret values. Avoid launching Agent OS under an environment that
+contains unrelated credentials.
 
 ## Local Ollama through OpenCode
 
-Omnigent 0.8.2 rejects OpenCode versions outside `>=1.17.7,<1.18.0`. Install the newest compatible
-release and use `agent-os doctor` to detect drift before a session starts:
+Omnigent 0.8.2 requires OpenCode `>=1.17.7,<1.18.0`. Install a compatible release and use
+`agent-os doctor` to detect drift:
 
 ```bash
 npm install --global opencode-ai@1.17.20
 ```
 
-Add this non-secret provider block to `~/.config/opencode/opencode.json`, preserving any existing
-keys such as `mcp`:
+Add a non-secret provider block to `~/.config/opencode/opencode.json`, preserving existing keys:
 
 ```json
 {
@@ -48,23 +52,23 @@ keys such as `mcp`:
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Ollama (local)",
-      "options": {
-        "baseURL": "http://localhost:11434/v1"
-      },
+      "options": { "baseURL": "http://localhost:11434/v1" },
       "models": {
-        "qwen3:14b": { "name": "Qwen 3 14B (local)" },
-        "gemma4:26b": { "name": "Gemma 4 26B (local)" }
+        "qwen3:14b": { "name": "Qwen 3 14B (local)" }
       }
     }
   }
 }
 ```
 
-The generated Agent OS variant pins `qwen3:14b` because it is the smaller general-purpose local
-coding model currently installed. `gemma4:26b` remains available for manual OpenCode selection.
-Embedding and function-specialist models are intentionally not exposed as coding agents.
+Select a different local model before bundle generation if needed:
 
-Verify registration and run a local-only smoke test:
+```bash
+export AGENT_OS_OLLAMA_MODEL="ollama/your-model"
+uv run agent-os init
+```
+
+Verify registration without involving Agent OS:
 
 ```bash
 ollama list
@@ -73,6 +77,5 @@ opencode run --pure --model ollama/qwen3:14b \
   "Return exactly OLLAMA_OPENCODE_OK and nothing else."
 ```
 
-Omnigent merges user-defined OpenCode providers into each per-session isolated config. That
-upstream behavior is the reason Agent OS needs only a model pin in generated YAML and no custom
-Ollama process or HTTP code.
+Omnigent merges user-defined OpenCode providers into its isolated session configuration. Agent OS
+does not implement a second provider adapter, key store, or model router.

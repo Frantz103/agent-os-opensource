@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SEAMS = {
+    "execution identity registry": ["src/agent_os/execution.py"],
     "typed task contracts": ["src/agent_os/models.py"],
     "domain task persistence": ["src/agent_os/store.py"],
     "cross-session context envelope": ["src/agent_os/context.py"],

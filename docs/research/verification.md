@@ -1,30 +1,39 @@
 # Verification record
 
-Verified locally on 2026-08-09.
+Current release-candidate checks were run locally on 2026-08-10. Earlier framework probes below
+are retained as dated experimental evidence and are not substitutes for the alpha release gate.
 
 ## Dependency and framework surface
 
-- `uv sync --dev` resolved and installed 141 packages.
+- `uv lock` resolved 162 packages for the supported Python range.
 - Installed framework versions: `nooa==0.0.8`, `omnigent==0.8.2`.
 - `agent-os doctor` found the repository Omnigent CLI plus compatible OpenCode 1.17.20, Ollama,
-  Doppler, Claude Code, Codex, and Prime Agent CLIs.
+  Claude Code, Codex, and Prime Agent CLIs.
 - `agent-os spec check` confirmed generated files match the NOOA definitions.
 - Omnigent's own `omnigent.spec.load()` accepted the complete generated agent-image directory.
 
 ## Automated checks
 
-- `.venv/bin/pytest`: 18 tests passed.
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 32 tests passed with 80% total
+  statement coverage.
 - `.venv/bin/ruff check .`: passed.
+- `.venv/bin/pyright`: passed with zero errors or warnings.
+- `.venv/bin/pip-audit`: found no known third-party dependency vulnerabilities; the unpublished
+  local `agent-os-opensource` distribution was the only skipped package.
+- A wheel built from the source distribution installed with plain pip in a clean Python 3.13
+  environment outside the checkout. That installed CLI initialized a state-owned bundle and passed
+  Omnigent spec validation. The same wheel correctly rejected unsupported Python 3.14.
 - Tests cover NOOA inheritance/typed contracts, spec compilation and drift, Omnigent bundle loading,
-  task state transitions, attempt and review persistence, context bounding, host function tools,
-  cross-vendor review enforcement, the review closure gate, and a no-process dry run.
+  task state transitions, schema migration and backup, crash reconciliation, concurrent work-item
+  exclusion, attempt and review immutability, context bounding, host function tools, provider-aware
+  review enforcement, the atomic closure gate, CLI reconciliation, and no-process dry runs.
 
 The added Prime tests verify its NOOA coordinator contract, exact bounded command construction,
 runtime attribution, positive autonomous limits, and that dry runs do not create attempts.
 The OpenCode extension test verifies the generated harness/model pins and that `doctor` fails loudly
 when an installed OpenCode version is outside Omnigent's supported range.
 
-## Bounded end-to-end attempt
+## Historical bounded end-to-end attempt (2026-08-09)
 
 A durable read-only smoke task was created and its complete Omnigent command/context was rendered.
 The first real invocation reached the installed Omnigent CLI but stopped before any model call
@@ -39,7 +48,7 @@ Therefore the verified claim is **framework-loaded and process-boundary-ready**,
 multi-agent completion.” A live Claude/Codex round trip remains an explicit operator-authorized
 integration check with an egress-approved task.
 
-## OpenCode, Ollama, and Doppler extension
+## OpenCode, Ollama, and secret-manager extension
 
 - OpenCode's provider documentation and Omnigent's shipped `opencode-native` example/source were
   reviewed before implementation. The extension uses their existing provider and harness seams.
@@ -59,11 +68,11 @@ integration check with an egress-approved task.
   Agent OS YAML, Omnigent, native OpenCode, and local `qwen3:14b`. The bounded response took about
   four minutes, so this path is useful for deliberate local work rather than latency-sensitive
   orchestration.
-- Doppler `web-data-projets/stg` was verified by secret name only; no values were printed or written
-  to the repository. A direct cloud probe returned exactly `DOPPLER_OPENCODE_OK` from
-  `openai/gpt-5.6-terra`, reporting a $0.0356675 model cost. The complete generated
-  `builder_opencode` path then returned exactly `OMNIGENT_DOPPLER_OK`, proving that the key survives
-  Doppler launch, Omnigent isolation, and native OpenCode provider execution.
+- A secret-manager-launched direct cloud probe returned exactly `CLOUD_OPENCODE_OK` from the
+  configured OpenAI model. The complete generated `builder_opencode` path then returned exactly
+  `OMNIGENT_CLOUD_OK`, proving that the selected key survives secret-manager launch, Omnigent
+  isolation, and native OpenCode provider execution. No secret values or private secret-manager
+  project identifiers are retained in this public record.
 - No custom OpenCode adapter, Ollama client, API-key loader, model router, or process supervisor was
   added. The source delta is declarative variants, a model pin field, provider-aware routing text,
   and a doctor compatibility check inside the already-existing compiler/CLI seams.

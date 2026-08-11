@@ -31,7 +31,7 @@ Omnigent agent-image directory. The mapping is intentionally mechanical:
 | planner | `PlannerAgent` | `claude-sdk` | read-only |
 | builder_claude | `BuilderAgent` | `claude-native` | workspace write |
 | builder_codex | `BuilderAgent` | `codex-native` | workspace write |
-| builder_opencode | `BuilderAgent` | `opencode-native`, `openai/gpt-5.6-terra` | workspace write |
+| builder_opencode | `BuilderAgent` | `opencode-native`, configurable cloud model | workspace write |
 | builder_ollama | `BuilderAgent` | `opencode-native`, `ollama/qwen3:14b` | workspace write |
 | reviewer_claude | `ReviewerAgent` | `claude-native` | read-only |
 | reviewer_codex | `ReviewerAgent` | `codex-native` | read-only |
@@ -99,13 +99,22 @@ involving untrusted code require a separately enforced OS/container sandbox.
 
 ## Provider boundary
 
-Harness and intelligence provider are separate choices. Both new builders use Omnigent's existing
-`opencode-native` harness. `builder_opencode` pins a direct OpenAI model and receives
-`OPENAI_API_KEY` from the caller environment; `builder_ollama` pins the OpenCode provider model
-`ollama/qwen3:14b`, which resolves to the local OpenAI-compatible endpoint. Agent OS adds no model
-client, provider adapter, secret store, or fallback router.
+Harness and intelligence provider are separate choices. Both additional builders use Omnigent's
+existing `opencode-native` harness. `builder_opencode` defaults to `openai/gpt-5` and can be set with
+`AGENT_OS_OPENCODE_MODEL`; `builder_ollama` defaults to `ollama/qwen3:14b`. Agent OS records the
+resolved provider and model on every implementation attempt so the store can reject a same-provider
+review even when two agents use different harnesses.
 
-Cloud credentials are injected only into the launch process with Doppler. The repository stores
-the project/config names and required secret names, never values. Local Ollama registration lives
-in the user's OpenCode config because Omnigent 0.8.2 already merges user provider definitions into
-each isolated OpenCode session.
+The launcher copies only an explicit environment allowlist and the credentials needed by built-in
+providers. Additional provider variable names require `AGENT_OS_ALLOWED_ENV`. Agent OS adds no model
+client, provider adapter, secret store, or fallback router. Local Ollama registration remains in the
+user's OpenCode config because Omnigent already merges user provider definitions into each isolated
+OpenCode session.
+
+## Ledger integrity boundary
+
+Schema migrations create a private backup before changing durable state. Task transitions use
+compare-and-swap updates, terminal attempt writes are idempotent, and only one running attempt may
+own a work item. Reviews bind to an exact successful implementation attempt and record the reviewer
+provider. Completion is a store-level transaction that requires evidence-backed approval for the
+latest attempt in every work item; prompt compliance alone cannot bypass it.

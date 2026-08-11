@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from agent_os.definitions import BuilderAgent, CoordinatorAgent, PlannerAgent, ReviewerAgent
+from agent_os.execution import execution_identity
 
 
 class LiteralString(str):
@@ -34,54 +35,44 @@ class AgentVariant:
     access: str
     description: str
     model: str | None = None
+    provider: str | None = None
+
+
+def _variant(name: str, definition: type, access: str, description: str) -> AgentVariant:
+    identity = execution_identity(name)
+    return AgentVariant(
+        name=name,
+        definition=definition,
+        harness=identity.harness,
+        access=access,
+        description=description,
+        model=identity.model,
+        provider=identity.provider,
+    )
 
 
 VARIANTS = (
-    AgentVariant("planner", PlannerAgent, "claude-sdk", "read_only", "Read-only task planner"),
-    AgentVariant(
-        "builder_claude",
-        BuilderAgent,
-        "claude-native",
-        "read_write",
-        "Claude Code implementation worker",
+    _variant("planner", PlannerAgent, "read_only", "Read-only task planner"),
+    _variant(
+        "builder_claude", BuilderAgent, "read_write", "Claude Code implementation worker"
     ),
-    AgentVariant(
-        "builder_codex",
-        BuilderAgent,
-        "codex-native",
-        "read_write",
-        "Codex implementation worker",
-    ),
-    AgentVariant(
+    _variant("builder_codex", BuilderAgent, "read_write", "Codex implementation worker"),
+    _variant(
         "builder_opencode",
         BuilderAgent,
-        "opencode-native",
         "read_write",
-        "OpenCode implementation worker using a Doppler-provided OpenAI key",
-        "openai/gpt-5.6-terra",
+        "OpenCode implementation worker using the configured cloud provider",
     ),
-    AgentVariant(
+    _variant(
         "builder_ollama",
         BuilderAgent,
-        "opencode-native",
         "read_write",
         "Local Ollama implementation worker through OpenCode",
-        "ollama/qwen3:14b",
     ),
-    AgentVariant(
-        "reviewer_claude",
-        ReviewerAgent,
-        "claude-native",
-        "read_only",
-        "Read-only Claude Code reviewer",
+    _variant(
+        "reviewer_claude", ReviewerAgent, "read_only", "Read-only Claude Code reviewer"
     ),
-    AgentVariant(
-        "reviewer_codex",
-        ReviewerAgent,
-        "codex-native",
-        "read_only",
-        "Read-only Codex reviewer",
-    ),
+    _variant("reviewer_codex", ReviewerAgent, "read_only", "Read-only Codex reviewer"),
 )
 
 
@@ -114,7 +105,7 @@ def _guardrails() -> dict[str, Any]:
                 "on": ["tool_call"],
                 "function": {
                     "path": "omnigent.inner.nessie.policies.blast_radius",
-                    "arguments": {"gate_pushes": False},
+                    "arguments": {"gate_pushes": True, "risky_action": "DENY"},
                 },
             }
         },
@@ -145,9 +136,9 @@ def _function_tools() -> dict[str, Any]:
                 "properties": {
                     "task_id": {"type": "string"},
                     "agent": {"type": "string"},
-                    "harness": {"type": "string"},
+                    "work_item": {"type": "string", "default": "primary"},
                 },
-                "required": ["task_id", "agent", "harness"],
+                "required": ["task_id", "agent"],
             },
         },
         "finish_attempt": {
@@ -178,7 +169,6 @@ def _function_tools() -> dict[str, Any]:
                     "task_id": {"type": "string"},
                     "attempt_id": {"type": "string"},
                     "reviewer": {"type": "string"},
-                    "harness": {"type": "string"},
                     "verdict": {
                         "type": "string",
                         "enum": ["approve", "request_changes", "blocked"],
@@ -187,7 +177,13 @@ def _function_tools() -> dict[str, Any]:
                     "issues": string_array(),
                     "evidence": string_array(),
                 },
-                "required": ["task_id", "reviewer", "harness", "verdict", "summary"],
+                "required": [
+                    "task_id",
+                    "attempt_id",
+                    "reviewer",
+                    "verdict",
+                    "summary",
+                ],
             },
         },
         "complete_task": {

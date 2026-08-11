@@ -4,18 +4,40 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-os-opensource"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "An evidence-oriented task layer over NOOA, Omnigent, and Prime Agent"
 readme = "README.md"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 authors = [{ name = "Frantz Studio" }]
+keywords = ["agents", "orchestration", "harness", "local-first", "ai"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
   "nooa==0.0.8",
   "omnigent==0.8.2",
+  # Omnigent uses broad >=0 ranges for these beta-versioned packages. Explicit
+  # prerelease floors make plain pip resolve the same supported line as uv.
+  "opentelemetry-instrumentation-fastapi>=0.65b0,<1",
+  "opentelemetry-instrumentation-httpx>=0.65b0,<1",
+  "opentelemetry-instrumentation-sqlalchemy>=0.65b0,<1",
   "pydantic>=2.11,<3",
   "pyyaml>=6,<7",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Frantz103/agent-os-opensource"
+Issues = "https://github.com/Frantz103/agent-os-opensource/issues"
+Repository = "https://github.com/Frantz103/agent-os-opensource"
+Security = "https://github.com/Frantz103/agent-os-opensource/security/policy"
 
 [project.scripts]
 agent-os = "agent_os.cli:main"
@@ -24,6 +46,9 @@ agent-os = "agent_os.cli:main"
 dev = [
   "pytest>=8.4,<10",
   "pytest-cov>=6,<8",
+  "build>=1.3,<2",
+  "pip-audit>=2.9,<3",
+  "pyright>=1.1.400,<2",
   "ruff>=0.12,<1",
 ]
 
@@ -40,3 +65,9 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"

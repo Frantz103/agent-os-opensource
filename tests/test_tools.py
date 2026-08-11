@@ -26,12 +26,11 @@ def test_omnigent_function_tools_update_domain_state(tmp_path: Path, monkeypatch
     )
 
     assert task.id in get_task_context(task.id)
-    attempt_id = start_attempt(task.id, "builder_codex", "codex-native")["attempt_id"]
+    attempt_id = start_attempt(task.id, "builder_codex")["attempt_id"]
     finish_attempt(attempt_id, "succeeded", "Implemented", ["pytest: 3 passed"])
     record_review(
         task.id,
         "reviewer_claude",
-        "claude-native",
         "approve",
         "Verified",
         attempt_id,
@@ -54,7 +53,9 @@ def test_completed_task_requires_approved_review(tmp_path: Path, monkeypatch) ->
         workspace=tmp_path,
         acceptance_criteria=["Approval is required"],
     )
-    start_attempt(task.id, "builder_codex", "codex-native")
+    attempt_id = start_attempt(task.id, "builder_codex")["attempt_id"]
+    finish_attempt(attempt_id, "succeeded", "Implemented", ["pytest: 1 passed"])
+    store.transition(task.id, "needs_review", reason="awaiting review")
 
-    with pytest.raises(ValueError, match="require.*review"):
+    with pytest.raises(ValueError, match="no independent review"):
         complete_task(task.id, "completed", "No review")
