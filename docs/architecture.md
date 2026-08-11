@@ -85,11 +85,23 @@ and OpenCode harness selection, sandboxed workspace execution, and different-pro
 review. Prime is the path for work that benefits from persistent goals, programmatic context,
 recursive agents, and background recovery.
 
-## Execution: direct Codex and Antigravity CLIs
+## Execution: direct OpenCode, Codex, and Antigravity CLIs
 
-The direct Codex and Antigravity branches are bounded implementation seams beside Omnigent and
-Prime Agent. Codex uses `codex exec --ephemeral` with a workspace-write sandbox and approval
-escalation disabled; Antigravity uses its native sandbox and the additional policy below:
+The direct OpenCode, Codex, and Antigravity branches are bounded implementation seams beside
+Omnigent and Prime Agent. OpenCode supports local Ollama or a named cloud model without a Claude
+coordinator. Codex uses `codex exec --ephemeral` with a workspace-write sandbox and approval
+escalation disabled; Antigravity uses its native sandbox and the additional policy below.
+
+For direct OpenCode, the host resolves the same version constrained by Omnigent, creates private
+per-task config/XDG directories, and invokes `opencode run --pure` with a concrete model and JSON
+stream. The fixed config denies ambient skills, subagents, web and external-directory tools, plus
+known outward/destructive shell commands. A terminal `step_finish`/`stop` event is required in
+addition to exit zero. The attempt records `builder_ollama` or `builder_opencode` with the inferred
+provider and actual model, then moves only to `needs_review`. OpenCode permissions are tool-layer
+policy rather than OS containment, so this direct branch is for trusted repositories unless an
+external container or VM is supplied.
+
+For Antigravity:
 
 1. The host resolves `agy>=1.1.6`, records a Google implementation attempt, and creates a private
    state-owned runtime directory.
@@ -143,9 +155,9 @@ The Claude SDK harness keeps the provider client outside the worker OS helper. W
 disabled, Omnigent disables native Claude tools and routes file and shell calls through independently
 sandboxed `sys_os_*` helpers. Agent OS applies the same boundary to the Codex subprocess harness by
 disabling its native shell and web search, leaving repository work to Omnigent's dynamic tools.
-Arbitrary tool egress remains denied, and reviewers receive no write paths. Prime Agent workers and
-kernels inherit user permissions; Prime tasks involving untrusted code require a separately
-enforced OS/container sandbox.
+Arbitrary tool egress remains denied, and reviewers receive no write paths. Direct OpenCode and
+Prime Agent workers inherit user permissions; tasks through either path involving untrusted code
+require a separately enforced OS/container sandbox.
 
 Antigravity is not registered as an Omnigent variant on 0.8.2. Omnigent's documented integration
 uses the Google Antigravity SDK and API/Vertex credentials, while Agent OS targets an existing CLI
@@ -155,11 +167,12 @@ the child exits. This hook is defense in depth around the CLI sandbox, not a rep
 
 ## Provider boundary
 
-Harness and intelligence provider are separate choices. The two OpenCode builders use Omnigent's
-existing `opencode-native` harness. `builder_opencode` defaults to `openai/gpt-5` and can be set with
+Harness and intelligence provider are separate choices. The two generated OpenCode builders use
+Omnigent's existing `opencode-native` harness; the direct OpenCode branch invokes the same CLI
+without Omnigent coordination. `builder_opencode` defaults to `openai/gpt-5` and can be set with
 `AGENT_OS_OPENCODE_MODEL`; `builder_ollama` defaults to `ollama/qwen3:14b`. Agent OS records the
 resolved provider and model on every implementation attempt so the store can reject a same-provider
-review even when two agents use different harnesses.
+review even when two agents use different launch paths.
 
 The launcher copies only an explicit environment allowlist and the credentials needed by built-in
 providers. Additional provider variable names require `AGENT_OS_ALLOWED_ENV`. Agent OS adds no model

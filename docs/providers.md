@@ -13,20 +13,25 @@ provider.
 | `builder_ollama` | OpenCode | `ollama/qwen3:14b` | local Ollama; no cloud key |
 | `builder_antigravity` | Antigravity CLI | `gemini-3.6-flash-high`/Google | Antigravity CLI subscription login |
 
-Only builder inference is local when `builder_ollama` is selected. Coordination and independent
-review still use Claude or Codex. Do not describe a complete run as offline merely because its
-builder was local. The Omnigent coordinator and planner remain Claude-backed; Codex is available as
-a generated implementation/review child, a direct workspace-write builder, and a direct read-only
-reviewer.
+Only builder inference is local when `builder_ollama` is selected. An Omnigent run still uses its
+Claude-backed coordinator and planner, while a direct OpenCode run removes that dependency.
+Independent review may still use Codex. Do not describe a complete run as offline merely because
+its builder was local. Codex is available as a generated implementation/review child, a direct
+workspace-write builder, and a direct read-only reviewer.
 
 ## Claude-capacity fallback and model tiers
 
 Agent OS never retries automatically after a usage-limit failure. An automatic retry could
 duplicate durable child work already launched by the first coordinator. Inspect the task and
-reconcile any running attempt. If no implementation succeeded, use either direct builder. Use the
-Codex reviewer only for a non-OpenAI implementation:
+reconcile any running attempt. If no implementation succeeded, use a direct builder. Use the Codex
+reviewer only for a non-OpenAI implementation:
 
 ```bash
+uv run agent-os run tsk_... --runtime opencode \
+  --provider ollama --model ollama/gemma4:26b
+uv run agent-os run tsk_... --runtime codex-review
+
+# Subscription-backed alternatives:
 uv run agent-os run tsk_... --runtime codex
 # or, for a Google implementation that Codex can independently review:
 uv run agent-os run tsk_... --runtime antigravity
@@ -47,6 +52,37 @@ export AGENT_OS_CODEX_BUILDER_MODEL="gpt-5.6-sol"
 export AGENT_OS_CODEX_REVIEWER_MODEL="gpt-5.6-sol"
 uv run agent-os --bundle agents/coordinator spec sync
 ```
+
+## Direct OpenCode fallback
+
+`--runtime opencode` invokes the pinned OpenCode CLI directly, without Claude or Omnigent
+coordination. Supply the full model identifier; Agent OS infers the provider from it and rejects a
+conflicting `--provider`. For local work, start Ollama and select an installed model:
+
+```bash
+ollama list
+uv run agent-os run tsk_... --runtime opencode \
+  --provider ollama --model ollama/gemma4:26b --timeout-seconds 300
+uv run agent-os run tsk_... --runtime codex-review
+```
+
+If `--model` is omitted, the direct path uses `AGENT_OS_OLLAMA_MODEL`, then the generated local
+builder default `ollama/qwen3:14b`. The explicit `gemma4:26b` command above is the locally verified
+end-to-end path; model availability and performance remain machine-specific.
+
+For each task, Agent OS creates a private `STATE_DIR/runtime/opencode-direct/TASK_ID` tree, isolates
+OpenCode's config and XDG directories, disables Claude compatibility discovery, uses an explicit
+loopback Ollama provider block, and supplies empty Git global/system configuration. The model-facing
+policy uses OpenCode's documented [permission rules](https://opencode.ai/docs/permissions/) to deny
+external-directory access, web tools, subagents, skills, questions, outward Git/SSH commands,
+publication, container commands, downloads, broad deletion, and file transfer. Exit zero is
+insufficient: the JSON stream must also contain a terminal `step_finish` event with reason `stop`.
+
+These OpenCode permissions are a tool-layer control, not an OS sandbox. The OpenCode process still
+runs as the invoking user. Use Omnigent's platform sandbox, a container, or a VM for untrusted code.
+A local Ollama attempt records `builder_ollama/opencode-native/ollama` and can be independently
+reviewed by direct Codex. A cloud OpenCode attempt backed by OpenAI cannot be reviewed by Codex;
+choose a reviewer backed by another provider.
 
 ## Antigravity subscription fallback
 

@@ -12,8 +12,9 @@ owns the Claude SDK, Codex, and OpenCode multi-harness path, including child
 sessions, sandboxing, policies, resume, and independent cross-provider review. OpenCode supplies both a cloud execution
 path and an OpenAI-compatible bridge to local Ollama models. Prime Agent optionally owns persistent
 goals, autonomous continuation, daemon supervision, IPython context, recursive agents, and recovery.
-Agent OS also provides a bounded direct Antigravity CLI implementation path that reuses an existing
-Google subscription login and hands the result to a direct, ephemeral Codex reviewer.
+Agent OS also provides bounded direct OpenCode, Codex, and Antigravity CLI implementation paths
+when the Claude-backed coordinator is unavailable. Each path records the real provider/model and
+hands non-OpenAI work to a direct, ephemeral Codex reviewer.
 
 Agent OS adds only the missing domain layer: a task with an objective, workspace, constraints,
 acceptance criteria, attempts, evidence, and review verdicts.
@@ -23,12 +24,12 @@ Agent OS task/attempt/review evidence store
                      |
           NOOA typed role definitions
                      |
-       +-------------+----------------+----------------+
-       |                              |                |
-       v                              v                v
-Omnigent bundle             Prime Agent       Antigravity CLI
-Claude + Codex              persistent goal   Google implementation
-OpenCode + local Ollama     daemon + RLM       Codex review handoff
+       +-------------+----------------+----------------+----------------+
+       |                              |                |                |
+       v                              v                v                v
+Omnigent bundle             Prime Agent       OpenCode CLI     Codex / Antigravity
+Claude + Codex              persistent goal   local or cloud   direct implementations
+OpenCode + local Ollama     daemon + RLM       bounded worker   review handoff
 ```
 
 ## What works
@@ -50,14 +51,16 @@ OpenCode + local Ollama     daemon + RLM       Codex review handoff
 - An optional bounded Prime Agent JSON runtime with persistent goals and autonomous limits.
 - A direct, subscription-backed Antigravity CLI implementation runtime with structured output,
   sandboxing, pre-tool policy enforcement, and durable Google provider attribution.
+- A direct OpenCode implementation runtime with private per-task configuration, explicit
+  provider/model attribution, tool-policy limits, and terminal-event validation.
 - Generated-spec drift checking and validation through Omnigent's own loader.
 
 ## Status
 
 Agent OS `0.1.0a1` is a local-first public alpha for bounded repository work. It is not a hosted,
 multi-tenant, or unattended production control plane. The task ledger, sandboxed Omnigent and
-Antigravity paths, provider-independent review gate, and bounded Prime Agent path are the supported
-surface.
+Antigravity paths, direct OpenCode/Codex fallbacks, provider-independent review gate, and bounded
+Prime Agent path are the supported surface.
 
 ## Install
 
@@ -129,11 +132,17 @@ uv run agent-os task show tsk_...
 ```
 
 The default coordinator and planner use Claude subscriptions. When Claude capacity is unavailable,
-Codex or Antigravity can perform a direct implementation using an existing CLI subscription login.
-Both record an implementation attempt and move the task to `needs_review`; neither approves its
-own work. Direct Codex uses the same workspace-write baseline as Antigravity:
+OpenCode, Codex, or Antigravity can perform a direct implementation. All three record an
+implementation attempt and move the task to `needs_review`; none approves its own work. The local
+OpenCode path uses Ollama without a cloud key, while Codex and Antigravity reuse existing CLI
+subscription logins:
 
 ```bash
+uv run agent-os run tsk_... --runtime opencode \
+  --provider ollama --model ollama/gemma4:26b --timeout-seconds 300
+uv run agent-os run tsk_... --runtime codex-review
+
+# Alternative direct subscription-backed builders:
 uv run agent-os run tsk_... --runtime codex
 uv run agent-os run tsk_... --runtime antigravity
 uv run agent-os run tsk_... --runtime codex-review
@@ -141,14 +150,15 @@ uv run agent-os run tsk_... --runtime codex-review
 
 This is an explicit recovery workflow, not an automatic retry: Agent OS does not launch a second
 runtime after a capacity failure because the first process may already have started durable child
-work. An OpenAI-backed direct Codex implementation requires a later non-OpenAI reviewer. The direct
-Codex reviewer is instead for successful non-OpenAI implementations; it uses Sol by default and can
-be overridden to Terra or Luna with `--model` or `AGENT_OS_CODEX_REVIEWER_MODEL`.
+work. Inspect the task ledger before choosing a fallback. OpenAI-backed direct Codex or OpenCode
+implementations require a later non-OpenAI reviewer. The direct Codex reviewer is for successful
+Ollama or Google implementations; it uses Sol by default and can be overridden to Terra or Luna
+with `--model` or `AGENT_OS_CODEX_REVIEWER_MODEL`.
 
 This direct runtime deliberately does not use Omnigent's Antigravity SDK harness: that upstream
 path requires a Gemini API key or Vertex credentials rather than the CLI subscription session. See
 [Provider setup](docs/providers.md) for the sandbox, policy, model override, and compatibility
-details.
+details, including the direct OpenCode containment boundary and local model setup.
 
 Or use Prime Agent's persistent runtime with explicit limits:
 

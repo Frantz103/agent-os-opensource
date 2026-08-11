@@ -19,9 +19,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from omnigent.opencode_native_app_server import (
+    OpenCodeVersionError,
+    check_opencode_version,
+    resolve_opencode_version,
+)
+
 from agent_os.context import build_task_context
 from agent_os.definitions import BuilderAgent, PrimeCoordinatorAgent
-from agent_os.execution import execution_identity
+from agent_os.execution import execution_identity, provider_from_model
 from agent_os.models import AttemptKind, AttemptRecord, AttemptStatus, TaskStatus
 from agent_os.store import TaskStore
 from agent_os.tools import collect_workspace_diff
@@ -93,6 +99,35 @@ _PROVIDER_ENV = {
 _OPENCODE_ISOLATION_CONFIG = {
     "$schema": "https://opencode.ai/config.json",
     "agent": {"build": {"tools": {"skill": False}}},
+}
+
+_OPENCODE_DIRECT_PERMISSIONS = {
+    "*": "allow",
+    "external_directory": "deny",
+    "question": "deny",
+    "task": "deny",
+    "skill": "deny",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "bash": {
+        "*": "allow",
+        "curl *": "deny",
+        "docker *": "deny",
+        "gh *": "deny",
+        "git commit*": "deny",
+        "git push*": "deny",
+        "git reset*": "deny",
+        "git clean*": "deny",
+        "npm publish*": "deny",
+        "podman *": "deny",
+        "rm *": "deny",
+        "rsync *": "deny",
+        "scp *": "deny",
+        "ssh *": "deny",
+        "twine *": "deny",
+        "uv publish*": "deny",
+        "wget *": "deny",
+    },
 }
 
 # Omnigent 0.8.2's headless ``-p`` async-orchestrator drain has a fixed 30-minute
@@ -176,6 +211,10 @@ def find_omnigent_cli() -> str | None:
 
 def find_prime_agent_cli() -> str | None:
     return shutil.which("prime-agent")
+
+
+def find_opencode_cli() -> str | None:
+    return shutil.which("opencode")
 
 
 def find_antigravity_cli() -> str | None:
@@ -330,6 +369,74 @@ def build_prime_agent_run_plan(
         kind=identity.kind,
         work_item="primary",
         goal=task.objective,
+    )
+
+
+def build_opencode_run_plan(
+    store: TaskStore,
+    task_id: str,
+    *,
+    opencode_command: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> RunPlan:
+    """Build a direct OpenCode implementation run without a Claude coordinator."""
+    task = store.get_task(task_id)
+    if not task.workspace.is_dir():
+        raise RuntimeError(f"task workspace is unavailable: {task.workspace}")
+    selected_model = model or os.environ.get("AGENT_OS_OLLAMA_MODEL") or "ollama/qwen3:14b"
+    selected_provider = provider_from_model(selected_model)
+    agent = "builder_ollama" if selected_provider == "ollama" else "builder_opencode"
+    identity = execution_identity(
+        agent,
+        provider=provider or selected_provider,
+        model=selected_model,
+    )
+    assert identity.provider is not None
+    executable = opencode_command or find_opencode_cli()
+    if executable is None:
+        raise RuntimeError("OpenCode CLI not found; install the pinned supported version")
+    if opencode_command is None:
+        try:
+            check_opencode_version(resolve_opencode_version(executable))
+        except (OSError, OpenCodeVersionError, subprocess.SubprocessError) as error:
+            raise RuntimeError(f"OpenCode CLI is incompatible: {error}") from error
+    role = inspect.getdoc(BuilderAgent) or ""
+    local_control = "/no_think\n" if identity.provider == "ollama" else ""
+    prompt = (
+        f"{local_control}{role}\n\n"
+        "You are the direct Agent OS OpenCode implementation worker. Work only in the supplied "
+        "task workspace. Do not push, commit, merge, deploy, contact external systems, use network "
+        "tools, launch subagents, or perform broad deletion. Implement the task, run bounded local "
+        "verification, and report changed files, exact verification results, and unresolved risks. "
+        "Do not claim independent review or durable task completion.\n\n"
+        f"Authoritative Agent OS task context for {task_id}:\n\n"
+        f"{build_task_context(store, task_id)}"
+    )
+    runtime_dir = store.state_dir / "runtime" / "opencode-direct" / task_id
+    return RunPlan(
+        command=(
+            executable,
+            "run",
+            "--pure",
+            "--model",
+            identity.model or "",
+            "--format",
+            "json",
+            "--dir",
+            str(task.workspace),
+            prompt,
+        ),
+        cwd=runtime_dir,
+        prompt=prompt,
+        runtime="opencode",
+        agent=identity.agent,
+        harness=identity.harness,
+        provider=identity.provider,
+        model=identity.model,
+        kind=identity.kind,
+        work_item="primary",
+        workspace=task.workspace,
     )
 
 
@@ -555,6 +662,7 @@ def run_task(
     runtime: str = "omnigent",
     omnigent_command: str | None = None,
     prime_agent_command: str | None = None,
+    opencode_command: str | None = None,
     antigravity_command: str | None = None,
     codex_command: str | None = None,
     token_budget: int = 80_000,
@@ -607,6 +715,14 @@ def run_task(
             provider=provider,
             model=model,
         )
+    elif runtime == "opencode":
+        plan = build_opencode_run_plan(
+            store,
+            task_id,
+            opencode_command=opencode_command,
+            provider=provider,
+            model=model,
+        )
     elif runtime == "antigravity":
         if provider is not None:
             raise ValueError("--provider applies only to the Prime Agent runtime")
@@ -647,7 +763,13 @@ def run_task(
     transcript_path = transcript_dir / f"{attempt.id}.log"
     stderr_path = (
         transcript_dir / f"{attempt.id}.stderr.log"
-        if plan.runtime in {"prime-agent", "antigravity", "codex", "codex-review"}
+        if plan.runtime in {
+            "prime-agent",
+            "opencode",
+            "antigravity",
+            "codex",
+            "codex-review",
+        }
         else None
     )
     providers = (
@@ -669,6 +791,15 @@ def run_task(
         environment["OPENCODE_CONFIG_DIR"] = str(_prepare_opencode_isolation_config(store))
     if plan.runtime == "prime-agent":
         environment.setdefault("PRIME_AGENT_TELEMETRY", "0")
+    if plan.runtime == "opencode":
+        opencode_environment = _prepare_direct_opencode_runtime(
+            plan.cwd,
+            model=plan.model or "",
+        )
+        environment.update(opencode_environment)
+        environment["GIT_CONFIG_GLOBAL"] = os.devnull
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        environment["GIT_TERMINAL_PROMPT"] = "0"
     if plan.runtime == "antigravity":
         environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
         environment["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -687,6 +818,7 @@ def run_task(
     runtime_failures: list[str] = []
     reader_errors: list[BaseException] = []
     antigravity_results: list[dict[str, object]] = []
+    opencode_results: list[dict[str, object]] = []
     codex_review_result: dict[str, object] | None = None
     try:
         with ExitStack() as stack:
@@ -748,6 +880,10 @@ def run_task(
                             terminal = _antigravity_terminal_result(line)
                             if terminal is not None:
                                 antigravity_results.append(terminal)
+                        if plan.runtime == "opencode":
+                            terminal = _opencode_terminal_result(line)
+                            if terminal is not None:
+                                opencode_results.append(terminal)
                 except BaseException as error:
                     reader_errors.append(error)
 
@@ -816,6 +952,8 @@ def run_task(
                 "Antigravity terminal status was "
                 f"{antigravity_results[-1].get('status', 'missing')!r}"
             )
+    if plan.runtime == "opencode" and not opencode_results:
+        runtime_failures.append("OpenCode stream ended without a terminal stop event")
     if plan.runtime == "codex-review":
         try:
             codex_review_result = _load_codex_review_result(plan.cwd / "review.result.json")
@@ -1060,6 +1198,57 @@ def _antigravity_terminal_result(line: str) -> dict[str, object] | None:
     if payload.get("event") != "result" or not isinstance(payload.get("result"), dict):
         return None
     return payload["result"]
+
+
+def _opencode_terminal_result(line: str) -> dict[str, object] | None:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    part = payload.get("part")
+    if (
+        payload.get("type") != "step_finish"
+        or not isinstance(part, dict)
+        or part.get("reason") != "stop"
+    ):
+        return None
+    return payload
+
+
+def _prepare_direct_opencode_runtime(runtime_dir: Path, *, model: str) -> dict[str, str]:
+    """Create private OpenCode state and a fail-closed direct-worker configuration."""
+    runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(runtime_dir, 0o700)
+    directories = {
+        "OPENCODE_CONFIG_DIR": runtime_dir / "config",
+        "XDG_CONFIG_HOME": runtime_dir / "xdg-config",
+        "XDG_DATA_HOME": runtime_dir / "xdg-data",
+        "XDG_CACHE_HOME": runtime_dir / "xdg-cache",
+        "XDG_STATE_HOME": runtime_dir / "xdg-state",
+    }
+    for path in directories.values():
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path, 0o700)
+    payload: dict[str, object] = {
+        "$schema": "https://opencode.ai/config.json",
+        "permission": _OPENCODE_DIRECT_PERMISSIONS,
+        "agent": {"build": {"tools": {"skill": False}}},
+    }
+    if provider_from_model(model) == "ollama":
+        model_id = model.partition("/")[2]
+        payload["provider"] = {
+            "ollama": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Ollama (local)",
+                "options": {"baseURL": "http://127.0.0.1:11434/v1"},
+                "models": {model_id: {"name": f"{model_id} (local)"}},
+            }
+        }
+    _write_private_json(directories["OPENCODE_CONFIG_DIR"] / "opencode.json", payload)
+    return {
+        "OPENCODE_DISABLE_CLAUDE_CODE": "1",
+        **{name: str(path) for name, path in directories.items()},
+    }
 
 
 def _prepare_opencode_isolation_config(store: TaskStore) -> Path:

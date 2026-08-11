@@ -23,11 +23,17 @@ RPC stack, message bus, context compactor, kernel manager, or refinement store. 
 yet be deleted without losing the task acceptance/review contract or Omnigent's sandboxed
 cross-provider harness path.
 
-The OpenCode/Ollama integration remains declarative. Omnigent supplies `opencode-native`; OpenCode
-supplies its OpenAI-compatible Ollama provider; the operator supplies launch-time secrets. The live
-probe exposed that `sandbox.type: auto` passes Omnigent's schema but is not a runtime backend in
-0.8.2. Removing that value lets Omnigent select its built-in platform backend without custom
-sandbox code.
+The generated OpenCode/Ollama integration remains declarative. Omnigent supplies
+`opencode-native`; OpenCode supplies its OpenAI-compatible Ollama provider; the operator supplies
+launch-time secrets. The live probe exposed that `sandbox.type: auto` passes Omnigent's schema but
+is not a runtime backend in 0.8.2. Removing that value lets Omnigent select its built-in platform
+backend without custom sandbox code.
+
+The direct OpenCode fallback reuses the existing multi-runtime launcher instead of implementing a
+model client, provider adapter, or agent loop. Agent OS adds task/provider attribution, private
+per-task configuration, a fixed permission document, and terminal-event validation around
+`opencode run --pure`. This is intentionally recorded as launcher growth; OpenCode still owns the
+agent loop, tools, provider transport, and local Ollama protocol.
 
 The distribution also pins compatible prerelease floors for Omnigent's three OpenTelemetry
 instrumentation dependencies. Omnigent declares them as `>=0,<1`, while the published versions use
@@ -65,10 +71,10 @@ Verified on 2026-08-11:
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
 | Antigravity pre-tool policy | 105 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1051 | `src/agent_os/runner.py` |
-| operator task CLI | 249 | `src/agent_os/cli.py` |
+| multi-runtime process launcher | 1230 | `src/agent_os/runner.py` |
+| operator task CLI | 259 | `src/agent_os/cli.py` |
 | gap measurement | 34 | `scripts/custom_loc.py` |
-| **Total** | **3,038** | |
+| **Total** | **3,227** | |
 
 Refresh with:
 

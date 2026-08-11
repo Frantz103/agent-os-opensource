@@ -23,7 +23,8 @@ declared workspace. It is not an authentication, tenancy, or remote-execution se
   state-owned pre-tool policy is an additional fail-closed control.
 - Codex's workspace-write sandbox is the containment boundary for direct fallback workers; its
   read-only sandbox separately contains direct reviews.
-- Prime Agent is unsandboxed unless the operator supplies a container, VM, or equivalent boundary.
+- Direct OpenCode and Prime Agent are unsandboxed unless the operator supplies a container, VM, or
+  equivalent boundary.
 
 ## Required controls
 
@@ -39,6 +40,11 @@ declared workspace. It is not an authentication, tenancy, or remote-execution se
   closed instead of being truncated or sent to a reviewer.
 - OpenCode builders deny ambient host skills at the model-facing tool boundary without modifying
   the operator's global configuration.
+- Direct OpenCode uses private config/XDG state, empty Git configuration, a loopback-only local
+  provider definition, and tool permissions that deny ambient web, external paths, subagents,
+  skills, outward mutation, publication, downloads, containers, file transfer, and broad deletion.
+  Exit zero without a terminal JSON stop event fails closed. These controls do not restrict the
+  OpenCode process itself to an OS sandbox.
 - Direct Antigravity builders run with a state-owned custom agent, slash commands and auto-update
   disabled, empty Git configuration, and a temporary activation-scoped global plugin whose wildcard
   pre-tool hook denies ambient web, browser, MCP, subagent, outward, destructive, and
@@ -76,6 +82,10 @@ declared workspace. It is not an authentication, tenancy, or remote-execution se
   mutations are therefore outside the supported alpha workflow.
 - OpenCode 1.17 still enumerates `~/.agents/skills` metadata locally even when the model-facing skill
   tool is denied; local runtime logs can therefore contain skill names.
+- Direct OpenCode passes the task envelope in its process argument because the CLI requires a
+  positional message; same-user process inspection and diagnostics may expose that context while
+  the run is active. Its deny rules are tool-layer policy and cannot contain a compromised CLI or
+  arbitrary shell process running with the operator's account.
 - Antigravity owns its subscription session and provider transport outside Agent OS state. A
   compromised CLI or hook host process still runs as the invoking user and can access user-owned
   files; the native sandbox and policy reduce worker-tool authority but do not sandbox the CLI

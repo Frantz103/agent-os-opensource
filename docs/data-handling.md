@@ -25,6 +25,14 @@ Claude compatibility and denies the `skill` tool for the model-facing build agen
 still enumerate host `~/.agents/skills` metadata locally at startup; it is not made available to the
 model. Agent OS does not rewrite the operator's global OpenCode configuration.
 
+Direct OpenCode runs use private config, data, cache, and state directories under
+`STATE_DIR/runtime/opencode-direct/TASK_ID/`, plus separate mode-`0600` stdout/stderr transcripts.
+For local Ollama, Agent OS writes only a non-secret loopback provider definition. OpenCode's CLI
+accepts the task prompt as a positional argument, so the task envelope may be visible to same-user
+process inspection while the child is running; dry-run output remains redacted by default. Treat
+process listings and diagnostics captured during direct OpenCode execution as sensitive. No
+operator OpenCode configuration or token is copied into Agent OS state.
+
 Direct Antigravity runs use the operator's existing CLI login, which remains owned by Antigravity
 under its normal user state. Agent OS does not copy that credential into task state. It writes the
 runtime's custom agent under `STATE_DIR/runtime/antigravity/`, retains stdout and stderr as separate

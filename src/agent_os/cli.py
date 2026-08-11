@@ -71,18 +71,28 @@ def _parser() -> argparse.ArgumentParser:
     context = sub.add_parser("context", help="Render the task context envelope")
     context.add_argument("task_id")
     run = sub.add_parser(
-        "run", help="Execute through Omnigent, Codex, Antigravity, or Prime Agent"
+        "run", help="Execute through Omnigent, OpenCode, Codex, Antigravity, or Prime Agent"
     )
     run.add_argument("task_id")
     run.add_argument("--dry-run", action="store_true")
     run.add_argument(
         "--runtime",
-        choices=["omnigent", "antigravity", "codex", "codex-review", "prime-agent"],
+        choices=[
+            "omnigent",
+            "opencode",
+            "antigravity",
+            "codex",
+            "codex-review",
+            "prime-agent",
+        ],
         default="omnigent",
     )
-    run.add_argument("--provider", help="Prime Agent intelligence provider (required for Prime)")
     run.add_argument(
-        "--model", help="Prime Agent, Antigravity, or Codex model identifier"
+        "--provider",
+        help="OpenCode or Prime Agent intelligence provider (required for Prime)",
+    )
+    run.add_argument(
+        "--model", help="OpenCode, Prime Agent, Antigravity, or Codex model identifier"
     )
     run.add_argument(
         "--show-prompt",

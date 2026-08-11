@@ -13,6 +13,7 @@ from agent_os.runner import (
     _antigravity_policy_plugin,
     _antigravity_terminal_result,
     _open_private_text,
+    _opencode_terminal_result,
     _runtime_failure,
     check_antigravity_version,
     resolve_antigravity_version,
@@ -204,6 +205,135 @@ def test_direct_codex_builder_executes_and_cleans_private_home(
     assert (runtime_dir / "implementation.result.txt").stat().st_mode & 0o777 == 0o600
     assert list(runtime_dir.glob("codex-home.*")) == []
     assert source_auth.read_text() == '{"test_token":"subscription-login"}\n'
+
+
+def test_direct_opencode_builder_is_isolated_and_attributed(tmp_path: Path) -> None:
+    opencode_runtime = tmp_path / "opencode"
+    opencode_runtime.write_text(
+        f"#!{sys.executable}\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "assert args[0] == 'run'\n"
+        "assert '--pure' in args\n"
+        "assert args[args.index('--model') + 1] == 'ollama/gemma4:26b'\n"
+        "assert args[args.index('--format') + 1] == 'json'\n"
+        "workspace = Path(args[args.index('--dir') + 1])\n"
+        "config_dir = Path(os.environ['OPENCODE_CONFIG_DIR'])\n"
+        "assert config_dir.parent == Path.cwd()\n"
+        "config = json.loads((config_dir / 'opencode.json').read_text())\n"
+        "assert config['permission']['external_directory'] == 'deny'\n"
+        "assert config['permission']['webfetch'] == 'deny'\n"
+        "assert config['permission']['websearch'] == 'deny'\n"
+        "assert config['permission']['task'] == 'deny'\n"
+        "assert config['permission']['bash']['git push*'] == 'deny'\n"
+        "assert config['provider']['ollama']['models']['gemma4:26b']\n"
+        "for name in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME'):\n"
+        "    path = Path(os.environ[name])\n"
+        "    assert path.parent == Path.cwd()\n"
+        "    assert path.stat().st_mode & 0o777 == 0o700\n"
+        "assert os.environ['OPENCODE_DISABLE_CLAUDE_CODE'] == '1'\n"
+        "assert os.environ['GIT_CONFIG_GLOBAL'] == os.devnull\n"
+        "(workspace / 'value.py').write_text('VALUE = 2\\n')\n"
+        "print(json.dumps({'type': 'step_start', 'part': {'type': 'step-start'}}))\n"
+        "print(json.dumps({'type': 'step_finish', 'part': {'reason': 'stop'}}))\n"
+    )
+    opencode_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "value.py").write_text("VALUE = 1\n")
+    task = store.create_task(
+        title="Direct local OpenCode",
+        objective="Change VALUE from 1 to 2 without Claude.",
+        workspace=workspace,
+        acceptance_criteria=["The local implementation awaits independent review"],
+    )
+
+    plan = run_task(
+        store,
+        task.id,
+        tmp_path / "unused-bundle",
+        dry_run=True,
+        runtime="opencode",
+        opencode_command=str(opencode_runtime),
+        model="ollama/gemma4:26b",
+    )
+    assert isinstance(plan, RunPlan)
+    assert plan.runtime == "opencode"
+    assert plan.agent == "builder_ollama"
+    assert plan.harness == "opencode-native"
+    assert plan.provider == "ollama"
+    assert plan.prompt.startswith("/no_think\n")
+    assert plan.prompt not in plan.shell_command()
+    assert "<task-context-redacted>" in plan.shell_command()
+    assert store.list_attempts(task.id) == []
+
+    assert (
+        run_task(
+            store,
+            task.id,
+            tmp_path / "unused-bundle",
+            runtime="opencode",
+            opencode_command=str(opencode_runtime),
+            model="ollama/gemma4:26b",
+            timeout_seconds=30,
+        )
+        == 0
+    )
+    assert (workspace / "value.py").read_text() == "VALUE = 2\n"
+    assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.agent == "builder_ollama"
+    assert attempt.harness == "opencode-native"
+    assert attempt.provider == "ollama"
+    assert attempt.model == "ollama/gemma4:26b"
+    assert attempt.status.value == "succeeded"
+
+
+def test_opencode_terminal_result_parser() -> None:
+    line = json.dumps({"type": "step_finish", "part": {"reason": "stop"}})
+    assert _opencode_terminal_result(line) == {
+        "type": "step_finish",
+        "part": {"reason": "stop"},
+    }
+    assert _opencode_terminal_result(
+        json.dumps({"type": "step_finish", "part": {"reason": "tool-calls"}})
+    ) is None
+    assert _opencode_terminal_result("not-json") is None
+
+
+def test_opencode_zero_exit_without_terminal_stop_fails_closed(tmp_path: Path) -> None:
+    runtime = tmp_path / "opencode"
+    runtime.write_text("#!/bin/sh\nprintf '%s\\n' '{\"type\":\"step_start\"}'\n")
+    runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Require OpenCode completion",
+        objective="Reject an incomplete OpenCode stream.",
+        workspace=workspace,
+        acceptance_criteria=["Missing terminal evidence fails closed"],
+    )
+
+    result = run_task(
+        store,
+        task.id,
+        tmp_path / "unused-bundle",
+        runtime="opencode",
+        opencode_command=str(runtime),
+        model="ollama/gemma4:26b",
+        timeout_seconds=30,
+    )
+
+    assert result == 1
+    assert store.get_task(task.id).status is TaskStatus.FAILED
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "failed"
+    assert "without a terminal stop event" in attempt.summary
 
 
 def test_dry_run_builds_bounded_antigravity_cli_command(tmp_path: Path) -> None:

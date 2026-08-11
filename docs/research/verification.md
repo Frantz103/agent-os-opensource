@@ -54,6 +54,29 @@ are retained as dated experimental evidence and are not substitutes for the alph
 - A failed process or zero exit without a structured terminal result fails the attempt and task.
   A successful implementation must still receive a different-provider review.
 
+## Direct OpenCode/Ollama fallback (2026-08-11)
+
+- Disposable task `tsk_10fd3653ec16` required one exact edit (`VALUE = 1` to `VALUE = 2`), one
+  pytest, no other file changes, no network or outward mutation, local Ollama attribution, and
+  independent review.
+- The first Omnigent attempt (`att_b47bf8a0cfc5`) failed before model execution because the managed
+  outer development sandbox denied Omnigent's global log path. The permission-adjusted retry
+  (`att_bc5f214a67d5`) reached Claude authentication and failed on the subscription weekly limit.
+  Both failures remained in the task ledger and neither produced approval.
+- Direct OpenCode then ran the same task with `ollama/gemma4:26b`, private per-task config/XDG
+  state, loopback Ollama registration, and the bounded tool policy. Attempt `att_ec9aa89ede1b`
+  recorded `builder_ollama/opencode-native/ollama`, changed only `value.py`, ran
+  `pytest test_value.py` with one pass, emitted the required terminal stop event, and moved the task
+  only to `needs_review`. The stderr transcript retained a non-blocking macOS FSEvents warning from
+  the managed outer sandbox.
+- Direct Codex/Sol review attempt `att_dca7bdfe8203` ran read-only, verified the exact file bytes,
+  single-file diff, implementation transcript, and an independent pytest pass. Review
+  `rev_ab6893624919` approved the exact Ollama attempt with nonempty evidence and moved the task to
+  `completed`.
+- This is the bounded local implementation-and-independent-review release gate. It proves recovery
+  from Claude capacity exhaustion without erasing the failed coordinator attempts. It does not
+  turn direct OpenCode's tool permissions into OS containment or make Codex review local/offline.
+
 ## Dependency and framework surface
 
 - `uv lock` resolved 162 packages for the supported Python range.
@@ -66,7 +89,7 @@ are retained as dated experimental evidence and are not substitutes for the alph
 
 ## Automated checks
 
-- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 79 tests passed with 87% total
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 82 tests passed with 87% total
   statement coverage.
 - `.venv/bin/ruff check .`: passed.
 - `.venv/bin/pyright`: passed with zero errors or warnings.
@@ -235,4 +258,5 @@ On 2026-08-11, a disposable Ollama/Prime probe confirmed that Agent OS passes th
 bounded limits to Prime. A direct no-tool probe returned exactly `LOCAL_OK`. In task mode the model
 did edit the disposable fixture and pass its test, but it did not call Prime's internal
 `goal.complete()` before exhausting its token budget. Agent OS recorded the attempts as failed and
-did not create an approval. This is useful failure evidence, not a passing local end-to-end gate.
+did not create an approval. This is useful failure evidence, not a passing Prime end-to-end gate;
+the direct OpenCode/Ollama path above is the separately verified local fallback.
