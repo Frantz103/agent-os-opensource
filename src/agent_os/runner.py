@@ -75,13 +75,16 @@ _PROVIDER_ENV = {
 }
 
 
-def runtime_environment(*, providers: set[str]) -> dict[str, str]:
+def runtime_environment(
+    *, providers: set[str], blocked_names: set[str] | None = None
+) -> dict[str, str]:
     """Build a minimal child environment with explicit provider credential families."""
     allowed = set(_BASE_ENV)
     for provider in providers:
         allowed.update(_PROVIDER_ENV.get(provider, set()))
     configured = os.environ.get("AGENT_OS_ALLOWED_ENV", "")
     allowed.update(item.strip() for item in configured.split(",") if item.strip())
+    allowed.difference_update(blocked_names or set())
     return {name: value for name, value in os.environ.items() if name in allowed}
 
 
@@ -260,7 +263,8 @@ def run_task(
         transcript_dir / f"{attempt.id}.stderr.log" if plan.runtime == "prime-agent" else None
     )
     providers = {"anthropic", "openai"} if plan.runtime == "omnigent" else {plan.provider}
-    environment = runtime_environment(providers=providers)
+    blocked_names = {"ANTHROPIC_API_KEY"} if plan.runtime == "omnigent" else set()
+    environment = runtime_environment(providers=providers, blocked_names=blocked_names)
     environment["AGENT_OS_STATE_DIR"] = str(store.state_dir)
     if plan.runtime == "prime-agent":
         environment.setdefault("PRIME_AGENT_TELEMETRY", "0")

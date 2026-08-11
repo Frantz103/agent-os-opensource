@@ -177,6 +177,17 @@ def test_runtime_environment_allows_explicit_extra_names(monkeypatch) -> None:
     assert runtime_environment(providers={"custom"})["CUSTOM_PROVIDER_KEY"] == "allowed"
 
 
+def test_runtime_environment_cannot_readd_explicitly_blocked_credential(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_OS_ALLOWED_ENV", "ANTHROPIC_API_KEY")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-pass")
+
+    environment = runtime_environment(
+        providers={"anthropic"}, blocked_names={"ANTHROPIC_API_KEY"}
+    )
+
+    assert "ANTHROPIC_API_KEY" not in environment
+
+
 def test_transcript_file_is_private(tmp_path: Path) -> None:
     transcript = tmp_path / "attempt.log"
     with _open_private_text(transcript) as stream:

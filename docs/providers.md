@@ -24,8 +24,7 @@ uv run agent-os init
 ```
 
 Agent OS passes only a small runtime environment allowlist. The built-in cloud path permits
-`OPENAI_API_KEY` and `ANTHROPIC_API_KEY`; additional variable names must be explicitly named in
-`AGENT_OS_ALLOWED_ENV`:
+`OPENAI_API_KEY`; additional variable names must be explicitly named in `AGENT_OS_ALLOWED_ENV`:
 
 ```bash
 export AGENT_OS_ALLOWED_ENV="CUSTOM_PROVIDER_API_KEY"
@@ -33,6 +32,12 @@ export AGENT_OS_ALLOWED_ENV="CUSTOM_PROVIDER_API_KEY"
 
 This variable contains names, not secret values. Avoid launching Agent OS under an environment that
 contains unrelated credentials.
+
+Omnigent 0.8.2 may materialize an injected Anthropic API key in a Claude child-process argument.
+Agent OS therefore removes `ANTHROPIC_API_KEY` from every Omnigent run, even when it appears in
+`AGENT_OS_ALLOWED_ENV`. Authenticate the coordinator and Claude-native workers with Claude's OAuth
+login. Prime Agent runs may receive an Anthropic key when `--provider anthropic` is selected because
+they do not traverse this Omnigent launch path.
 
 ## Local Ollama through OpenCode
 

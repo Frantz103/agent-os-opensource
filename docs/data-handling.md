@@ -13,6 +13,10 @@ Agent OS does not upload its SQLite database. A configured harness or model prov
 task envelope and repository content needed for execution. A local Ollama builder does not make the
 whole workflow offline because planning and review may still use cloud harnesses.
 
+Raw Anthropic API keys are not forwarded to Omnigent 0.8.2 because that version may expose them in
+child-process arguments. Use Claude OAuth for Omnigent runs. This restriction does not make process
+inspection generally safe; treat runtime diagnostics as sensitive.
+
 Before sharing state or bug reports:
 
 1. Remove credentials, private repository paths, customer data, and personal information.

@@ -14,7 +14,7 @@ are retained as dated experimental evidence and are not substitutes for the alph
 
 ## Automated checks
 
-- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 37 tests passed with 85% total
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 38 tests passed with 85% total
   statement coverage.
 - `.venv/bin/ruff check .`: passed.
 - `.venv/bin/pyright`: passed with zero errors or warnings.
@@ -36,8 +36,10 @@ The same probe exposed two further release blockers. A provider credential was m
 Omnigent into a child process argument, and the local builder was dispatched without a durable
 implementation-attempt record. The stalled process was interrupted after seven minutes; Agent OS
 terminated the complete process group and recorded the failure. A wall-clock timeout now applies to
-both supported runtimes, with regression coverage. The provider credential must be rotated and the
-upstream credential/host-tool boundary must be mitigated before a public release.
+both supported runtimes, with regression coverage. Agent OS now strips `ANTHROPIC_API_KEY` from the
+Omnigent environment even when an operator names it in the custom allowlist, and bundle validation
+checks the real runtime tool registry. The exposed credential still must be rotated before another
+provider run or public release.
 
 The added Prime tests verify its NOOA coordinator contract, exact bounded command construction,
 runtime attribution, positive autonomous limits, and that dry runs do not create attempts.

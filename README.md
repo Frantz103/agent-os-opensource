@@ -68,8 +68,9 @@ Omnigent 0.8.2 requires OpenCode `>=1.17.7,<1.18.0`; the verified installation i
 npm install --global opencode-ai@1.17.20
 ```
 
-Omnigent can reuse existing Claude Code and Codex subscription logins. If neither is configured,
-run `uv run omnigent setup`.
+Omnigent reuses Claude Code and Codex subscription logins. Agent OS intentionally does not forward
+a raw Anthropic API key to Omnigent 0.8.2 because upstream may expose it in a process argument. Run
+`claude` and use `/login` before the first live task; see [Provider setup](docs/providers.md).
 
 OpenCode cloud runs default to `openai/gpt-5`. Select another public OpenCode provider/model before
 generating the bundle with `AGENT_OS_OPENCODE_MODEL`, and inject only that provider's credential:
