@@ -256,6 +256,7 @@ def run_task(
         environment.setdefault("PRIME_AGENT_TELEMETRY", "0")
 
     process: subprocess.Popen[str] | None = None
+    runtime_failure: str | None = None
     try:
         with ExitStack() as stack:
             transcript = stack.enter_context(_open_private_text(transcript_path))
@@ -280,6 +281,7 @@ def run_task(
                 sys.stdout.write(line)
                 sys.stdout.flush()
                 transcript.write(line)
+                runtime_failure = runtime_failure or _runtime_failure(line)
             return_code = process.wait()
     except BaseException as error:
         if process is not None and process.poll() is None:
@@ -295,6 +297,8 @@ def run_task(
             store.transition(task_id, TaskStatus.FAILED, reason=f"{plan.runtime} process exception")
         raise
 
+    if runtime_failure is not None and return_code == 0:
+        return_code = 1
     status = AttemptStatus.SUCCEEDED if return_code == 0 else AttemptStatus.FAILED
     evidence = [f"transcript: {transcript_path}"]
     if stderr_path is not None:
@@ -302,7 +306,11 @@ def run_task(
     store.finish_attempt(
         attempt.id,
         status=status,
-        summary=f"{plan.runtime} coordinator exited with code {return_code}",
+        summary=(
+            f"{plan.runtime} coordinator failed: {runtime_failure}"
+            if runtime_failure is not None
+            else f"{plan.runtime} coordinator exited with code {return_code}"
+        ),
         evidence=evidence,
         transcript_path=str(transcript_path),
     )
@@ -316,6 +324,17 @@ def run_task(
 def _open_private_text(path: Path):
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     return os.fdopen(descriptor, "w", encoding="utf-8")
+
+
+def _runtime_failure(line: str) -> str | None:
+    """Recognize fatal launcher messages emitted with a misleading zero exit status."""
+    stripped = line.strip()
+    fatal_prefixes = (
+        "Failed to authenticate:",
+        "Failed to start agent:",
+        "Failed to launch agent:",
+    )
+    return stripped if stripped.startswith(fatal_prefixes) else None
 
 
 def _terminate_process(process: subprocess.Popen[str]) -> None:

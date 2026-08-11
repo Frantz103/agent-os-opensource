@@ -6,7 +6,13 @@ from typing import Any, cast
 import pytest
 
 from agent_os.models import TaskStatus
-from agent_os.runner import RunPlan, _open_private_text, run_task, runtime_environment
+from agent_os.runner import (
+    RunPlan,
+    _open_private_text,
+    _runtime_failure,
+    run_task,
+    runtime_environment,
+)
 from agent_os.store import TaskStore
 
 
@@ -176,3 +182,40 @@ def test_transcript_file_is_private(tmp_path: Path) -> None:
         stream.write("evidence")
 
     assert transcript.stat().st_mode & 0o777 == 0o600
+
+
+def test_runtime_authentication_failure_is_not_treated_as_success() -> None:
+    message = "Failed to authenticate: OAuth session expired and could not be refreshed\n"
+
+    assert _runtime_failure(message) == message.strip()
+    assert _runtime_failure("agent: implementation completed\n") is None
+
+
+def test_zero_exit_runtime_authentication_failure_fails_attempt(tmp_path: Path) -> None:
+    fake_runtime = tmp_path / "fake-omnigent"
+    fake_runtime.write_text(
+        "#!/bin/sh\necho 'Failed to authenticate: expired test session'\nexit 0\n"
+    )
+    fake_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Fail closed",
+        objective="Do not accept a misleading zero exit.",
+        workspace=workspace,
+        acceptance_criteria=["Authentication failure is recorded"],
+    )
+
+    result = run_task(
+        store,
+        task.id,
+        tmp_path / "bundle",
+        omnigent_command=str(fake_runtime),
+    )
+
+    assert result == 1
+    assert store.get_task(task.id).status is TaskStatus.FAILED
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "failed"
+    assert "expired test session" in attempt.summary

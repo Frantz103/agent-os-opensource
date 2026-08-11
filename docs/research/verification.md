@@ -14,7 +14,7 @@ are retained as dated experimental evidence and are not substitutes for the alph
 
 ## Automated checks
 
-- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 32 tests passed with 80% total
+- `.venv/bin/pytest --cov=agent_os --cov-report=term-missing`: 34 tests passed with 84% total
   statement coverage.
 - `.venv/bin/ruff check .`: passed.
 - `.venv/bin/pyright`: passed with zero errors or warnings.
@@ -27,6 +27,10 @@ are retained as dated experimental evidence and are not substitutes for the alph
   task state transitions, schema migration and backup, crash reconciliation, concurrent work-item
   exclusion, attempt and review immutability, context bounding, host function tools, provider-aware
   review enforcement, the atomic closure gate, CLI reconciliation, and no-process dry runs.
+
+A bounded local release probe also proved that Omnigent can emit an authentication failure while
+exiting zero. Agent OS now recognizes the explicit fatal launcher message, records a failed attempt,
+and returns nonzero; a fake-runtime regression test preserves that fail-closed behavior.
 
 The added Prime tests verify its NOOA coordinator contract, exact bounded command construction,
 runtime attribution, positive autonomous limits, and that dry runs do not create attempts.
