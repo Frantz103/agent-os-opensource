@@ -19,4 +19,41 @@ jobs:
       - uses: github/codeql-action/init@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
         with:
           languages: python
-      - uses: github/codeql-action/analyze@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
+      - id: analyze
+        uses: github/codeql-action/analyze@24c7eb380a2dc368f2d129e4c65e51d172983a1e # v4
+        with:
+          output: ${{ runner.temp }}/codeql-results
+          # Code scanning uploads are unavailable on a private personal repository.
+          # Keep analysis mandatory now and publish the same SARIF after the repo is public.
+          upload: ${{ github.event.repository.private && 'never' || 'always' }}
+          upload-database: false
+      - name: Fail on CodeQL findings
+        env:
+          SARIF_OUTPUT: ${{ steps.analyze.outputs.sarif-output }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          sarif_dir = Path(os.environ["SARIF_OUTPUT"])
+          files = sorted(sarif_dir.glob("*.sarif"))
+          if not files:
+              raise SystemExit(f"CodeQL produced no SARIF files in {sarif_dir}")
+
+          findings = []
+          for path in files:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              for run in payload.get("runs", []):
+                  findings.extend(run.get("results", []))
+
+          if findings:
+              for finding in findings:
+                  rule = finding.get("ruleId", "unknown-rule")
+                  message = finding.get("message", {}).get("text", "CodeQL finding")
+                  level = finding.get("level", "warning")
+                  print(f"{level}: CodeQL {rule}: {message}")
+              raise SystemExit(f"CodeQL reported {len(findings)} finding(s)")
+
+          print(f"CodeQL produced {len(files)} SARIF file(s) with no findings")
+          PY
