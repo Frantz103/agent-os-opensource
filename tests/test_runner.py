@@ -161,12 +161,14 @@ def test_prime_agent_requires_declared_intelligence_provider(tmp_path: Path) -> 
 def test_runtime_environment_is_allowlisted(monkeypatch) -> None:
     monkeypatch.setenv("PATH", "/bin")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/private-agent.sock")
     monkeypatch.setenv("UNRELATED_PRIVATE_TOKEN", "must-not-pass")
 
     environment = runtime_environment(providers={"openai"})
 
     assert environment["PATH"] == "/bin"
     assert environment["OPENAI_API_KEY"] == "openai-secret"
+    assert "SSH_AUTH_SOCK" not in environment
     assert "UNRELATED_PRIVATE_TOKEN" not in environment
 
 

@@ -57,7 +57,6 @@ _BASE_ENV = {
     "LOGNAME",
     "PATH",
     "SHELL",
-    "SSH_AUTH_SOCK",
     "TERM",
     "TMPDIR",
     "TMP",
