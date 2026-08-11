@@ -1,23 +1,31 @@
 # Agent OS Open Source
 
-Agent OS is a deliberately thin multi-agent task system built to measure what
-[NVIDIA NOOA](https://github.com/NVIDIA-NeMo/labs-OO-Agents) and
-[Omnigent](https://github.com/omnigent-ai/omnigent) already provide. It also evaluates
-[Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) as a persistent, long-running peer
-runtime.
+Agent OS is a local-first execution and review layer for teams using more than one AI coding
+runtime. It lets Claude, Codex, OpenCode, Ollama, Antigravity, and Prime Agent work against one
+durable task contract instead of leaving task state scattered across unrelated sessions.
 
-NOOA is the source of agent definitions: roles are Python classes, docstrings are prompts, and
-typed generation methods are their contracts. A small compiler emits an Omnigent bundle. Omnigent
-owns the Claude SDK, Codex, and OpenCode multi-harness path, including child
-sessions, sandboxing, policies, resume, and independent cross-provider review. OpenCode supplies both a cloud execution
-path and an OpenAI-compatible bridge to local Ollama models. Prime Agent optionally owns persistent
-goals, autonomous continuation, daemon supervision, IPython context, recursive agents, and recovery.
-Agent OS also provides bounded direct OpenCode, Codex, and Antigravity CLI implementation paths
-when the Claude-backed coordinator is unavailable. Each path records the real provider/model and
-hands non-OpenAI work to a direct, ephemeral Codex reviewer.
+Most coding harnesses optimize a single agent session. Agent OS is for work that must survive
+provider limits, process crashes, runtime handoffs, and independent review without losing the
+acceptance contract or confusing a model response with completed work.
 
-Agent OS adds only the missing domain layer: a task with an objective, workspace, constraints,
-acceptance criteria, attempts, evidence, and review verdicts.
+Every task has an objective, workspace, constraints, acceptance criteria, attributed attempts,
+evidence, and review verdicts. A successful process is not enough to close the task: the exact
+implementation attempt must produce evidence and receive approval from a reviewer backed by a
+different model provider.
+
+Use Agent OS when you need to:
+
+- switch runtimes when a provider is unavailable without losing task history or repeating work;
+- combine local models with cloud coding agents while preserving the real provider/model identity;
+- keep an inspectable audit trail of what changed, what was verified, and who approved it;
+- recover cleanly from interrupted processes, stale attempts, and concurrent workers; or
+- enforce bounded repository work without granting agents permission to push, merge, or deploy.
+
+Under the hood, [NVIDIA NOOA](https://github.com/NVIDIA-NeMo/labs-OO-Agents) defines typed agent
+roles, [Omnigent](https://github.com/omnigent-ai/omnigent) runs the sandboxed multi-harness graph,
+and [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent) provides an optional persistent
+runtime. Agent OS joins those capabilities with the durable task ledger and independent review gate
+needed to operate them as one workflow.
 
 ```text
 Agent OS task/attempt/review evidence store
@@ -32,28 +40,22 @@ Claude + Codex              persistent goal   local or cloud   direct implementa
 OpenCode + local Ollama     daemon + RLM       bounded worker   review handoff
 ```
 
-## What works
+## Why teams would use it
 
-- Five NOOA role definitions, including runtime-specific Omnigent and Prime coordinators.
-- Seven generated Omnigent child variants spanning Claude SDK, Codex subprocess, native OpenCode,
-  and local Ollama environments.
-- A durable SQLite task model with explicit state transitions and append-only task events.
-- Bounded task-context handoff that preserves the objective and acceptance contract.
-- Omnigent function tools that record attempts, evidence, reviews, and closure while agents work.
-- Bounded host-generated status/diff evidence for reviewers, without exposing `.git` history or
-  user Git configuration to model sandboxes.
-- A fail-closed dispatch policy that requires recorded implementation attempts and exact-attempt,
-  different-provider review before the corresponding child sessions can launch.
-- OpenCode build sessions deny ambient host skills without changing global OpenCode configuration.
-- Cross-provider review: cloud OpenCode work is reviewed by Claude and local Ollama work by Codex,
-  while the existing Claude/Codex pairing remains reciprocal.
-- A one-command dry run and live run path with persisted transcripts.
-- An optional bounded Prime Agent JSON runtime with persistent goals and autonomous limits.
-- A direct, subscription-backed Antigravity CLI implementation runtime with structured output,
-  sandboxing, pre-tool policy enforcement, and durable Google provider attribution.
-- A direct OpenCode implementation runtime with private per-task configuration, explicit
-  provider/model attribution, tool-policy limits, and terminal-event validation.
-- Generated-spec drift checking and validation through Omnigent's own loader.
+- **One source of task truth.** SQLite-backed tasks, attempts, reviews, and append-only events
+  survive across harness sessions and provider changes.
+- **Provider-independent approval.** The review gate binds a verdict to the exact implementation
+  attempt and rejects reviewers backed by the same provider.
+- **Practical fallback paths.** Move from Claude coordination to direct OpenCode/Ollama, Codex, or
+  Antigravity execution without silently retrying or erasing earlier failures.
+- **Evidence before completion.** Reviewers receive bounded working-tree evidence and verification
+  results; an exit code or model claim cannot complete a task by itself.
+- **Fail-closed recovery.** Private transcripts, crash reconciliation, concurrent work exclusion,
+  terminal-event validation, and explicit state transitions prevent ambiguous completion.
+- **Local and cloud choice.** Use a local Ollama builder, subscription-backed CLIs, or cloud models
+  while recording the harness, provider, and model that actually performed the work.
+- **Inspectable configuration.** Typed NOOA roles compile into checked Omnigent specs, and dry runs
+  show the execution plan without exposing task context by default.
 
 ## Status
 
@@ -65,10 +67,9 @@ Prime Agent path are the supported surface.
 ## Install
 
 Python 3.12-3.13, `uv`, Claude Code, and Codex are expected. OpenCode, Ollama, Antigravity CLI, and
-Prime Agent are optional additional environments. Framework versions are pinned to the stable
-releases studied here: NOOA 0.0.8 and Omnigent 0.8.2. Prime Agent is installed separately; the
-evaluation used version 0.7.1. The direct Antigravity path requires `agy>=1.1.6` and an existing CLI
-login.
+Prime Agent are optional additional environments. Supported framework versions are pinned to NOOA
+0.0.8 and Omnigent 0.8.2. Prime Agent is installed separately; this integration is verified against
+version 0.7.1. The direct Antigravity path requires `agy>=1.1.6` and an existing CLI login.
 
 On Linux, Omnigent's sandbox also requires Bubblewrap:
 
@@ -193,13 +194,13 @@ uv run python scripts/custom_loc.py
 `agents/**/config.yaml` is generated. Edit `src/agent_os/definitions.py` or the compiler and run
 `uv run agent-os --bundle agents/coordinator spec sync`; do not hand-edit the bundle.
 
-## Experiment findings
+## Why this architecture
 
-The short answer is that the frameworks provide most agent and harness infrastructure. NOOA makes
-roles unusually testable and typed. Omnigent supplies native harness interoperability, sandboxing,
-review routing, persistent sessions, policies, and UI. Prime Agent supplies the strongest
-long-running local runtime: goals, supervision, schedules, heartbeats, direct messaging, recursive
-agents, persistent Python, compaction, refinement, and recovery.
+The upstream frameworks already provide most agent and harness infrastructure. NOOA makes roles
+testable and typed. Omnigent supplies native harness interoperability, sandboxing, review routing,
+persistent sessions, policies, and UI. Prime Agent supplies long-running local capabilities such as
+goals, supervision, schedules, heartbeats, direct messaging, recursive agents, persistent Python,
+compaction, refinement, and recovery.
 
 The main missing seam is an explicit unit-of-work model that survives across sessions and binds
 acceptance criteria to attempts, review verdicts, and evidence. The second is a bridge from NOOA's
