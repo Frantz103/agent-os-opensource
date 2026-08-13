@@ -1310,6 +1310,36 @@ def _runtime_failure(line: str) -> str | None:
     )
 
 
+class RuntimeTerminated(BaseException):
+    """Raised when a supervising process asks Agent OS to stop.
+
+    Inherits ``BaseException`` so it unwinds through the governed cleanup in
+    ``run_task`` instead of being absorbed by ordinary error handling.
+    """
+
+
+def install_termination_handlers() -> None:
+    """Turn supervisor stop signals into an exception that unwinds.
+
+    The default disposition for ``SIGTERM`` ends the process immediately, so no
+    ``finally`` block runs, the attempt is never closed, and a child harness
+    started in its own session survives as an orphan. Supervisors cancel with
+    ``SIGTERM``, so it has to raise instead.
+
+    ``SIGKILL`` cannot be intercepted. A supervisor that escalates to it must
+    terminate the recorded attempt process group itself.
+    """
+    if os.name != "posix":
+        return
+
+    def stop(signum: int, _frame: object) -> None:
+        raise RuntimeTerminated(signal.Signals(signum).name)
+
+    for received in (signal.SIGTERM, signal.SIGHUP):
+        with suppress(OSError, ValueError):
+            signal.signal(received, stop)
+
+
 def _terminate_process(process: subprocess.Popen[str]) -> None:
     try:
         if os.name == "posix":
