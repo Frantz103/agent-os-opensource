@@ -32,6 +32,14 @@ changes.
   warning. A direct OpenCode run on local `qwen3:14b` claimed all three succeeded while nothing
   reached any target, which is what made requiring the refusal half of `blocked` necessary.
 
+- An owner review path. `agent-os review TASK --attempt ATT --verdict approve|request_changes`
+  records the operator's own verdict through the registered `reviewer_owner` identity, whose
+  provider is `operator`. Because that differs from every model provider, the independence gate is
+  satisfied rather than bypassed, and the existing rules still hold: the verdict binds to one exact
+  implementation attempt, an approval without evidence is refused, and `request_changes` blocks the
+  task. A local `builder_ollama` implementation reviewed by the owner completes a task without any
+  non-local call, which a second model reviewer cannot do.
+
 ## 0.1.0a3 - 2026-08-13
 
 ### Fixed

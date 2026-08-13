@@ -279,3 +279,109 @@ def test_run_terminated_by_supervisor_exits_cleanly(monkeypatch, tmp_path: Path,
 
     assert cli.main(["--state-dir", str(state_dir), "run", task.id]) == 143
     assert capsys.readouterr().err == "terminated on SIGTERM\n"
+
+
+def _succeeded_implementation(store: TaskStore, tmp_path: Path):
+    task = store.create_task(
+        title="Owner review",
+        objective="Let the owner supply the independent verdict.",
+        workspace=tmp_path,
+        acceptance_criteria=["Owner approves the exact attempt"],
+    )
+    store.transition(task.id, TaskStatus.RUNNING)
+    attempt = store.start_attempt(task.id, agent="builder_ollama")
+    store.finish_attempt(
+        attempt.id,
+        status=AttemptStatus.SUCCEEDED,
+        summary="done",
+        evidence=["message.txt changed from before to release"],
+    )
+    store.transition(task.id, TaskStatus.NEEDS_REVIEW)
+    return task, attempt
+
+
+def test_owner_verdict_completes_the_task(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, attempt = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", attempt.id,
+                "--verdict", "approve",
+                "--summary", "Owner checked the diff and the test.",
+                "--evidence", "git diff shows only the intended file",
+            ]
+        )
+        == 0
+    )
+    assert "completed" in capsys.readouterr().out
+    stored = store.get_task(task.id)
+    assert stored.status is TaskStatus.COMPLETED
+    review = store.list_reviews(task.id)[0]
+    assert review.reviewer == "reviewer_owner"
+    assert review.provider == "operator"
+    assert review.attempt_id == attempt.id
+
+
+def test_owner_approval_without_evidence_is_refused(tmp_path: Path, capsys) -> None:
+    """An owner verdict is a review, not a rubber stamp."""
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, attempt = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", attempt.id,
+                "--verdict", "approve",
+                "--summary", "Looks fine.",
+            ]
+        )
+        == 2
+    )
+    assert "approved reviews require evidence" in capsys.readouterr().err
+    assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW
+
+
+def test_owner_request_changes_blocks_the_task(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, attempt = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", attempt.id,
+                "--verdict", "request_changes",
+                "--summary", "The test does not cover the stated criterion.",
+                "--issue", "missing coverage",
+            ]
+        )
+        == 0
+    )
+    assert store.get_task(task.id).status is TaskStatus.BLOCKED
+
+
+def test_owner_verdict_requires_an_exact_attempt(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, _ = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", "att_does_not_exist",
+                "--verdict", "approve",
+                "--summary", "Approving without naming the real attempt.",
+                "--evidence", "none",
+            ]
+        )
+        == 2
+    )
+    assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW

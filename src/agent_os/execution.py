@@ -120,6 +120,13 @@ _PROFILES: dict[str, ExecutionIdentity] = {
         provider="anthropic",
         kind=AttemptKind.COORDINATOR,
     ),
+    "reviewer_owner": ExecutionIdentity(
+        agent="reviewer_owner",
+        role="reviewer",
+        harness="operator",
+        provider="operator",
+        kind=AttemptKind.COORDINATOR,
+    ),
     "reviewer_codex": ExecutionIdentity(
         agent="reviewer_codex",
         role="reviewer",
