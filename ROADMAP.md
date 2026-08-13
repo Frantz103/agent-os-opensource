@@ -50,3 +50,38 @@ Claude planning
 ```
 
 This should build on the handoff contract rather than introduce a separate agent-to-agent chat protocol.
+
+## Under consideration: bring-your-own harness adapters
+
+Not planned work. Recorded so the open questions are not rediscovered later.
+
+Supported runtimes are currently first-class: six plan builders, twenty-six runtime branches, and
+sixty-nine runtime-name literals, plus runtime-specific containment. Adding a harness therefore
+costs a code change and a fresh security review, which is the real barrier rather than the command
+line.
+
+A declarative adapter would have to cover three surfaces:
+
+- invocation, as an argument template with a declared prompt injection point and model flag;
+- observation, as a declared rule for terminal success, because a harness can exit successfully
+  without doing the work;
+- containment, which is the unresolved one.
+
+The open question is whether Agent OS owns an operating-system containment boundary around any
+adapter process, or whether each adapter declares its own. If containment stays harness-specific,
+every adapter needs an individual security review and the extension point does not honestly
+generalize. If Agent OS owns it, harness policy becomes defense in depth, but nested sandboxing
+limits already recorded in the verification record apply.
+
+Two constraints hold regardless:
+
+- Provider independence must compare resolved model identity rather than a declared provider,
+  because an adapter author controls the declaration.
+- An adapter must not be able to exempt itself from independent review.
+
+A conformance task that must be denied a write outside the workspace, a network call, and a push
+would be the admission evidence for any adapter.
+
+A model-routing launcher such as OpenRouter's Ori is a decorator over an adapter rather than an
+adapter itself: it prefixes the invocation and changes the backing model, so it would apply to
+every adapter at once instead of being wired per runtime.
