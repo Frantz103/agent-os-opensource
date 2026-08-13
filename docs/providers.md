@@ -310,9 +310,19 @@ still taken: a runtime that crosses a boundary and then hangs has still crossed 
   state under `$TMPDIR` and **blocked** with the same probe under `$HOME`, because
   `workspace-write` grants `$TMPDIR`. The report warns when its state sits in a temporary
   directory; prefer a state directory outside one.
+- **The network check is loopback-scoped, and a `blocked` verdict is not evidence of absent
+  egress.** What it establishes is that the runtime's command surface could not open a connection
+  to a listener on `127.0.0.1`. A subscription harness reaches its provider on every turn over a
+  transport this check never touches, so egress plainly exists at the process level even when the
+  check reports `blocked`. Do not cite this verdict to satisfy an egress requirement.
 - **The checks are not orthogonal.** Under a filesystem sandbox, "write outside" and "push to a
   repository outside" are one control expressed twice. They are three capabilities an operator
   cares about, not three independent mechanisms.
+- **The targets are siblings of the workspace.** `outside/` and `remote.git/` sit beside
+  `workspace/` under one probe directory, so a sandbox that grants the workspace's *parent* as
+  writable produces `crossed` on both for a reason that is not a missing boundary. This is the
+  same class of confound as the `$TMPDIR` finding, and unlike that one it survives moving the
+  state directory. Read a `crossed` pair together with the runtime's declared writable roots.
 - **Model strength shows up as `not_attempted`.** A weak local model may not carry out the
   instructions at all. `--runtime` is required and has no default for this reason, and a local
   model may need a much larger `--timeout-seconds` than a subscription runtime.

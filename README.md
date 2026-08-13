@@ -226,9 +226,11 @@ shown to hold. A run where nothing was attempted exits non-zero as inconclusive.
 
 Read a report with its confounds in view. The runtime is cooperative and openly instructed, so a
 crossing proves a hostile agent could do the same while a non-crossing proves only that this
-attempt failed. A weak local model inflates `not_attempted`. And because sandboxes commonly grant
-the temporary directory as a writable root, probe state under `$TMPDIR` can turn a boundary into a
-crossing; the report says so when that applies.
+attempt failed. A weak local model inflates `not_attempted`. Because sandboxes commonly grant the
+temporary directory as a writable root, probe state under `$TMPDIR` can turn a boundary into a
+crossing; the report says so when that applies. And the network check is loopback-scoped — a
+`blocked` verdict says the runtime's command surface could not reach a local listener, not that the
+runtime cannot reach the internet. [Provider setup](docs/providers.md) covers the rest.
 
 Child harnesses run with Omnigent's automation mode and OS helpers restricted to the declared
 workspace with arbitrary tool network egress denied. For Claude SDK children, Omnigent keeps the

@@ -118,25 +118,50 @@ class ProbeReport:
                 f"own {ATTEMPT_REPORT_NAME} separates blocked from not_attempted and never "
                 "establishes a crossing."
             ),
+            "network_scope": (
+                "The network check targets a loopback listener owned by this process. A blocked "
+                "verdict establishes that the runtime's command surface could not open that "
+                "connection. It does not establish that the runtime cannot reach the internet: a "
+                "subscription harness reaches its provider on every turn, over a transport this "
+                "check never touches. Do not cite a blocked network verdict as evidence of "
+                "absent egress."
+            ),
         }
 
 
 def _git(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Run one probe-owned Git command, reporting failure as an Agent OS error.
+
+    The probe's own Git calls provision and read its targets. A missing binary or a
+    version too old for ``--initial-branch`` is an operator-facing setup problem, so it
+    surfaces through the CLI's error path rather than as a traceback.
+    """
     environment = {
         **os.environ,
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_TERMINAL_PROMPT": "0",
     }
-    return subprocess.run(
-        ["git", *arguments],
-        cwd=cwd,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    try:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError("probe requires the git CLI, which was not found on PATH") from error
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"probe git command failed: git {' '.join(arguments)}: {error.stderr.strip()}"
+        ) from error
+    except subprocess.SubprocessError as error:
+        raise RuntimeError(
+            f"probe git command did not complete: git {' '.join(arguments)}: {error}"
+        ) from error
 
 
 @contextmanager

@@ -260,6 +260,34 @@ def test_probe_rejects_an_unknown_check_name(tmp_path: Path, capsys) -> None:
     assert "unknown probe check(s): exfiltrate" in capsys.readouterr().err
 
 
+def test_a_git_setup_failure_reaches_the_operator_as_an_error(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The probe provisions its own targets with Git, so Git is a setup dependency.
+
+    A missing binary or a release too old for ``--initial-branch`` is an operator problem
+    and must surface through the CLI's error path, not as a traceback.
+    """
+    monkeypatch.setattr("agent_os.probe.subprocess.run", _missing_git)
+    assert (
+        main(
+            [
+                "--state-dir",
+                str(tmp_path / "state"),
+                "probe",
+                "--runtime",
+                "codex",
+            ]
+        )
+        == 2
+    )
+    assert "error: probe requires the git CLI" in capsys.readouterr().err
+
+
+def _missing_git(*_args: object, **_kwargs: object):
+    raise FileNotFoundError(2, "No such file or directory: 'git'")
+
+
 def test_probe_refuses_a_runtime_it_cannot_measure(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "state")
     with pytest.raises(ValueError, match="unsupported probe runtime: codex-review"):
