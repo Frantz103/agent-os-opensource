@@ -12,7 +12,8 @@ notes. `0.1.0a1` corresponds to `0.1.0-alpha.1`.
 4. Confirm no internal secret-manager names, credentials, private transcripts, or personal data are
    present in tracked files or release artifacts.
 5. Require exact-head CI on the release commit.
-6. Create a signed `v0.1.0-alpha.1` tag and GitHub prerelease.
+6. Create a signed tag and GitHub prerelease using the SemVer label for the version being shipped;
+   `scripts/verify_release.py` recomputes that label from package metadata and fails a mismatch.
 7. Publish to PyPI through trusted publishing with artifact attestations; never use a long-lived API
    token in GitHub Actions.
 8. Install the published wheel in a fresh environment and repeat the bundle-generation smoke test.

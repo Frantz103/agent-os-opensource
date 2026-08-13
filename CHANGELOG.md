@@ -3,6 +3,24 @@
 This project follows Semantic Versioning. Alpha releases may still contain documented breaking
 changes.
 
+## 0.1.0a2 - 2026-08-13
+
+### Added
+
+- A documented PyPI install path. `agent-os-opensource` publishes the `agent-os` command, and the
+  README now covers `uv tool install`, `pip install`, and `uv pip install` alongside the existing
+  from-source workflow.
+- Regression coverage for the documented quickstart: `task create`, `task show`, `task list`,
+  `context`, and `run --dry-run` are now exercised through `main()`, including the dry-run
+  redaction of task context.
+- Regression coverage for `doctor` failure paths: missing required CLIs and an invalid bundle.
+
+### Changed
+
+- `doctor` now ends a failing run with an explicit summary naming each failed check and stating
+  that an optional runtime may be absent but must be a supported version when installed. The exit
+  status is unchanged: an installed but incompatible optional runtime still fails.
+
 ## 0.1.0a1 - 2026-08-11
 
 ### Added

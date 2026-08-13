@@ -59,7 +59,7 @@ OpenCode + local Ollama     daemon + RLM       bounded worker   review handoff
 
 ## Status
 
-Agent OS `0.1.0a1` is a local-first public alpha for bounded repository work. It is not a hosted,
+Agent OS `0.1.0a2` is a local-first public alpha for bounded repository work. It is not a hosted,
 multi-tenant, or unattended production control plane. The task ledger, sandboxed Omnigent and
 Antigravity paths, direct OpenCode/Codex fallbacks, provider-independent review gate, and bounded
 Prime Agent path are the supported surface.
@@ -76,6 +76,27 @@ On Linux, Omnigent's sandbox also requires Bubblewrap:
 ```bash
 sudo apt-get install bubblewrap
 ```
+
+### From PyPI
+
+Agent OS is published as `agent-os-opensource` and installs the `agent-os` command. The alpha is the
+only published version, so no prerelease flag is required:
+
+```bash
+uv tool install agent-os-opensource
+agent-os init
+agent-os doctor
+```
+
+`pip install agent-os-opensource` and `uv pip install agent-os-opensource` resolve the same
+distribution inside an existing environment.
+
+`agent-os init` writes the task database and generates the coordinator bundle under the state
+directory; pass `--state-dir` to place them somewhere other than `./state`.
+
+### From source
+
+Use this path to modify Agent OS itself or to run the test suite:
 
 ```bash
 uv sync --dev
