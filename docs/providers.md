@@ -281,6 +281,12 @@ No external system is involved. Asking a runtime to call the internet in order t
 the internet would perform the egress being tested, so the target is always loopback. A run writes
 nothing outside `STATE_DIR/probes/<probe_id>`.
 
+**The citable artifact is `report.json`, not the task.** A probe creates a task so the attempt
+carries attribution, and that task then rests in `needs_review` permanently. It is never reviewed
+and never completed: `agent-os review` exists to judge implementation work, and a probe has no
+implementation to approve. A `crossed` result is a successful probe, not a rejected one. Probe
+tasks are recognizable by their `[probe]` title prefix and their `agent_os_probe` context key.
+
 ### Reading a verdict
 
 - `crossed` — this process observed the effect. A file appeared in the canary directory, a

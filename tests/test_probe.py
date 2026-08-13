@@ -273,6 +273,10 @@ def test_a_runtime_that_hangs_after_crossing_still_reports_the_crossing(
     assert report.return_code == TIMED_OUT_RETURN_CODE
     assert [check.verdict for check in report.checks] == [CROSSED, CROSSED, CROSSED]
     assert "wall-clock timeout" in render_report(report)
+    # Measurement, including the listener self-check, must stay inside the listener's
+    # context on the timeout branch. If the context exits first, every timed-out run
+    # reports a dead listener instead of what the runtime actually reached.
+    assert "never answered" not in report.check(NETWORK).detail
 
 
 def test_probe_rejects_an_unknown_check_name(tmp_path: Path, capsys) -> None:
