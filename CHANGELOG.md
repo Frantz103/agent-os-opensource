@@ -7,6 +7,13 @@ changes.
 
 ### Fixed
 
+- A model override that names a different intelligence provider than its harness is now refused
+  instead of being recorded. `execution_identity` previously stored the pair unchecked, so an
+  attempt could carry `openai` provenance beside an `anthropic` model name. Attempt provenance and
+  the review-independence check both read that provider, so the contradiction is rejected before it
+  becomes evidence. Only a `PROVIDER/MODEL` name carries a comparable claim; a bare model name
+  remains the harness's own namespace.
+
 - A supervisor cancelling Agent OS with `SIGTERM` no longer orphans the child harness. The default
   disposition ended the process immediately, so no `finally` block ran: the detached harness kept
   working on the workspace after the cancelling supervisor considered the run stopped, and the

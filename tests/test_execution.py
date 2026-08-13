@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from agent_os.execution import execution_identity
 
 
@@ -32,3 +34,30 @@ def test_antigravity_cli_uses_current_default_and_override(monkeypatch) -> None:
     assert identity.harness == "antigravity-cli"
     assert identity.provider == "google"
     assert identity.model == "gemini-3.5-flash-high"
+
+
+def test_model_naming_a_different_provider_is_refused() -> None:
+    with pytest.raises(ValueError, match="contradicts the 'anthropic' provider"):
+        execution_identity("builder_claude", model="openai/gpt-5")
+
+
+def test_reviewer_model_naming_a_different_provider_is_refused() -> None:
+    with pytest.raises(ValueError, match="contradicts the 'anthropic' provider"):
+        execution_identity("reviewer_claude", model="google/gemini-3-pro")
+
+
+def test_provider_qualified_model_matching_its_harness_is_accepted() -> None:
+    identity = execution_identity("builder_ollama", model="ollama/gemma4:26b")
+    assert identity.provider == "ollama"
+    assert identity.model == "ollama/gemma4:26b"
+
+
+def test_bare_model_name_stays_the_harness_namespace() -> None:
+    """A bare name is not provider-qualified, so it cannot be checked here.
+
+    This records the deliberate limit of the contradiction check: only a
+    PROVIDER/MODEL name carries a claim that can be compared.
+    """
+    identity = execution_identity("reviewer_codex", model="gpt-5.6-terra")
+    assert identity.provider == "openai"
+    assert identity.model == "gpt-5.6-terra"
