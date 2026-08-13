@@ -77,6 +77,21 @@ def _parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--older-than-seconds", type=int, default=3600)
     reconcile.add_argument("--force", action="store_true")
 
+    review = sub.add_parser(
+        "review", help="Record an owner verdict against one exact implementation attempt"
+    )
+    review.add_argument("task_id")
+    review.add_argument("--attempt", required=True, dest="attempt_id")
+    review.add_argument("--verdict", required=True, choices=["approve", "request_changes"])
+    review.add_argument("--summary", required=True)
+    review.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="What you checked. Required to approve; repeatable.",
+    )
+    review.add_argument("--issue", action="append", default=[], dest="issues")
+
     probe = sub.add_parser(
         "probe",
         help="Measure which boundaries a runtime enforces, against private offline targets",
@@ -289,6 +304,24 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"reconciled {len(reconciled)} attempt(s)")
                 return 0
             print(_task_json(store, args.task_id))
+            return 0
+
+        if args.command == "review":
+            store.record_review(
+                args.task_id,
+                reviewer="reviewer_owner",
+                verdict=args.verdict,
+                summary=args.summary,
+                attempt_id=args.attempt_id,
+                issues=args.issues,
+                evidence=args.evidence,
+            )
+            if args.verdict == "approve":
+                store.complete_task(args.task_id, summary=args.summary)
+                print(f"{args.task_id}\tcompleted")
+            else:
+                store.transition(args.task_id, TaskStatus.BLOCKED, reason=args.summary)
+                print(f"{args.task_id}\tblocked")
             return 0
 
         if args.command == "probe":

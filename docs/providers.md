@@ -12,6 +12,26 @@ provider.
 | `builder_opencode` | OpenCode | `openai/gpt-5` | `OPENAI_API_KEY` or OpenCode auth |
 | `builder_ollama` | OpenCode | `ollama/qwen3:14b` | local Ollama; no cloud key |
 | `builder_antigravity` | Antigravity CLI | `gemini-3.6-flash-high`/Google | Antigravity CLI subscription login |
+| `reviewer_owner` | operator | operator | none; the human operator |
+
+## Owner review
+
+`reviewer_owner` records the operator's own verdict against one exact implementation attempt:
+
+```bash
+uv run agent-os review tsk_... --attempt att_... --verdict approve \
+  --summary "What you concluded" \
+  --evidence "What you actually checked"
+```
+
+Its provider is `operator`, which differs from every model provider, so the independence gate is
+satisfied rather than bypassed. The same rules apply as to a model reviewer: the verdict binds to
+one implementation attempt, an approval without evidence is refused, and `request_changes` blocks
+the task.
+
+This is the reviewer to use when a run must make no non-local call at all. A local `builder_ollama`
+implementation reviewed by the owner completes a task without contacting any model provider, which
+a second model reviewer cannot do.
 
 Only builder inference is local when `builder_ollama` is selected. An Omnigent run still uses its
 Claude-backed coordinator and planner, while a direct OpenCode run removes that dependency.
