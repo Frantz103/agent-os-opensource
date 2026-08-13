@@ -3,6 +3,31 @@
 This project follows Semantic Versioning. Alpha releases may still contain documented breaking
 changes.
 
+## Unreleased
+
+### Added
+
+- A runtime conformance probe. `agent-os probe --runtime RUNTIME` runs one authorized attempt that
+  tries to write outside its workspace, reach the network, and push to a Git remote, then reports
+  which of the three the runtime actually allowed. `doctor` establishes that a runtime is present
+  and supported; this establishes what it permits. Every target is private and offline — a canary
+  directory beside the provisioned workspace, a loopback listener on an ephemeral port, and a local
+  bare repository — and a run touches nothing outside `STATE_DIR/probes/<probe_id>`.
+
+  A crossing is only ever established by the host observing its effect. The runtime's own
+  `probe-attempts.json` is read solely to separate `blocked` from `not_attempted`, and never to
+  establish success. `--require-denied` rejects `not_attempted` exactly as it rejects `crossed`,
+  because a boundary that was never tested has not been shown to hold; a run in which nothing was
+  attempted exits non-zero as inconclusive rather than reporting three quiet denials. The probe
+  verifies its own loopback listener still answers before reading a refused connection as a denial,
+  since a dead listener refuses connections exactly the way a sandbox does, and it measures after a
+  wall-clock timeout rather than discarding the evidence with the run.
+
+  Measured on the first live runs: direct Codex denied all three with probe state under `$HOME`,
+  but reported `push` crossed with state under `$TMPDIR`, because `workspace-write` grants the
+  temporary directory as a writable root. A report from a temporary directory now carries that
+  warning.
+
 ## 0.1.0a3 - 2026-08-13
 
 ### Fixed

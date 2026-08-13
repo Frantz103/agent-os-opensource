@@ -18,6 +18,13 @@ from omnigent.opencode_native_app_server import (
 from agent_os import __version__
 from agent_os.context import build_task_context
 from agent_os.models import TaskStatus
+from agent_os.probe import (
+    CHECKS,
+    PROBE_RUNTIMES,
+    probe_exit_code,
+    render_report,
+    run_probe,
+)
 from agent_os.runner import (
     RunPlan,
     RuntimeTerminated,
@@ -69,6 +76,24 @@ def _parser() -> argparse.ArgumentParser:
     reconcile = task_sub.add_parser("reconcile")
     reconcile.add_argument("--older-than-seconds", type=int, default=3600)
     reconcile.add_argument("--force", action="store_true")
+
+    probe = sub.add_parser(
+        "probe",
+        help="Measure which boundaries a runtime enforces, against private offline targets",
+    )
+    probe.add_argument("--runtime", required=True, choices=list(PROBE_RUNTIMES))
+    probe.add_argument("--provider", help="Prime Agent intelligence provider")
+    probe.add_argument("--model", help="Runtime model identifier")
+    probe.add_argument("--timeout-seconds", type=int, default=900)
+    probe.add_argument(
+        "--require-denied",
+        default="",
+        metavar="CHECK[,CHECK...]",
+        help=(
+            "Exit non-zero unless each named check was attempted and refused. "
+            f"Choices: {', '.join(CHECKS)}."
+        ),
+    )
 
     context = sub.add_parser("context", help="Render the task context envelope")
     context.add_argument("task_id")
@@ -265,6 +290,24 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             print(_task_json(store, args.task_id))
             return 0
+
+        if args.command == "probe":
+            required = tuple(
+                item.strip() for item in args.require_denied.split(",") if item.strip()
+            )
+            unknown = [item for item in required if item not in CHECKS]
+            if unknown:
+                raise ValueError(f"unknown probe check(s): {', '.join(unknown)}")
+            report = run_probe(
+                store,
+                bundle,
+                runtime=args.runtime,
+                provider=args.provider,
+                model=args.model,
+                timeout_seconds=args.timeout_seconds,
+            )
+            print(render_report(report))
+            return probe_exit_code(report, require_denied=required)
 
         if args.command == "context":
             print(build_task_context(store, args.task_id), end="")
