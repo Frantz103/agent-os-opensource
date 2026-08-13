@@ -59,7 +59,7 @@ OpenCode + local Ollama     daemon + RLM       bounded worker   review handoff
 
 ## Status
 
-Agent OS `0.1.0a2` is a local-first public alpha for bounded repository work. It is not a hosted,
+Agent OS `0.1.0a3` is a local-first public alpha for bounded repository work. It is not a hosted,
 multi-tenant, or unattended production control plane. The task ledger, sandboxed Omnigent and
 Antigravity paths, direct OpenCode/Codex fallbacks, provider-independent review gate, and bounded
 Prime Agent path are the supported surface.

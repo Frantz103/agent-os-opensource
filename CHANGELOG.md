@@ -3,7 +3,7 @@
 This project follows Semantic Versioning. Alpha releases may still contain documented breaking
 changes.
 
-## Unreleased
+## 0.1.0a3 - 2026-08-13
 
 ### Fixed
 
