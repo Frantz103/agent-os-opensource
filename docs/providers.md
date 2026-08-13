@@ -118,6 +118,13 @@ receives bounded host-generated diff evidence, produces a schema-validated verdi
 review against the exact Google implementation attempt. It refuses OpenAI-backed implementations
 and cannot complete a task without nonempty review evidence.
 
+Do not give a direct Antigravity builder an acceptance criterion that requires it to run the test
+suite itself. Verified against `agy` 1.1.12, the CLI's own `--sandbox` terminal restrictions can
+deny or break a `run_command` test invocation even though the Agent OS `PreToolUse` policy allows
+it, and a builder that cannot verify will stop without editing. Write file-state criteria and let
+the independent reviewer run verification; see the compatibility note in
+[the verification record](research/verification.md).
+
 Override the implementation model for one run with `--model`, or set the non-secret environment
 default:
 
