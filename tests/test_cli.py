@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from agent_os import cli
@@ -96,3 +97,151 @@ def test_run_timeout_exits_cleanly(monkeypatch, tmp_path: Path, capsys) -> None:
 
     assert cli.main(["--state-dir", str(state_dir), "run", task.id]) == 2
     assert capsys.readouterr().err == "error: omnigent process exceeded 1 seconds\n"
+
+
+def test_quickstart_create_show_and_context_round_trip(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    assert (
+        cli.main(
+            [
+                "--state-dir",
+                str(state_dir),
+                "task",
+                "create",
+                "--title",
+                "Add a repository health command",
+                "--objective",
+                "Add a read-only command that reports config and test readiness.",
+                "--workspace",
+                str(workspace),
+                "--accept",
+                "The command exits zero when required tools are present",
+                "--constraint",
+                "Do not push, merge, deploy, or contact external services",
+                "--context",
+                "ticket=FRA-1",
+            ]
+        )
+        == 0
+    )
+    task_id = capsys.readouterr().out.strip()
+    assert task_id.startswith("tsk_")
+
+    assert cli.main(["--state-dir", str(state_dir), "task", "show", task_id]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["id"] == task_id
+    assert payload["context"] == {"ticket": "FRA-1"}
+    assert payload["attempts"] == []
+    assert payload["reviews"] == []
+
+    assert cli.main(["--state-dir", str(state_dir), "task", "list"]) == 0
+    assert task_id in capsys.readouterr().out
+
+    assert cli.main(["--state-dir", str(state_dir), "context", task_id]) == 0
+    rendered = capsys.readouterr().out
+    assert "# Agent OS task contract" in rendered
+    assert "Do not push, merge, deploy, or contact external services" in rendered
+
+
+def test_task_create_rejects_malformed_context(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    assert (
+        cli.main(
+            [
+                "--state-dir",
+                str(state_dir),
+                "task",
+                "create",
+                "--title",
+                "Bad context",
+                "--objective",
+                "Reject malformed key/value context.",
+                "--workspace",
+                str(workspace),
+                "--accept",
+                "Exits non-zero",
+                "--context",
+                "not-a-pair",
+            ]
+        )
+        == 2
+    )
+    assert "context must use KEY=VALUE: not-a-pair" in capsys.readouterr().err
+
+
+def test_agents_command_lists_runtime_variants(tmp_path: Path, capsys) -> None:
+    assert cli.main(["--state-dir", str(tmp_path / "state"), "agents"]) == 0
+    listed = capsys.readouterr().out
+    assert "coordinator\tclaude-sdk" in listed
+    assert "builder_antigravity\tantigravity-cli" in listed
+
+
+def test_run_dry_run_prints_plan_and_redacts_task_context(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task = store.create_task(
+        title="Plan only",
+        objective="Show the execution plan without revealing task context.",
+        workspace=tmp_path,
+        acceptance_criteria=["Dry run prints the plan"],
+    )
+    plan = cli.RunPlan(
+        command=("omnigent", "run", "--print=SENSITIVE"),
+        cwd=tmp_path,
+        prompt="SENSITIVE",
+        runtime="omnigent",
+        agent="coordinator",
+        harness="claude-sdk",
+        provider="anthropic",
+    )
+    monkeypatch.setattr(cli, "run_task", lambda *args, **kwargs: plan)
+
+    assert cli.main(["--state-dir", str(state_dir), "run", task.id, "--dry-run"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "runtime: omnigent" in printed
+    assert "identity: coordinator/claude-sdk/anthropic" in printed
+    assert "model: runtime default" in printed
+    assert "SENSITIVE" not in printed
+
+
+def test_doctor_reports_missing_required_tool_with_summary(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    bundle = tmp_path / "coordinator"
+    sync_specs(bundle)
+    monkeypatch.setattr(cli, "find_omnigent_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_antigravity_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_prime_agent_cli", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+
+    assert cli._doctor(bundle) == 1
+
+    printed = capsys.readouterr().out
+    assert "omnigent   MISSING" in printed
+    assert "doctor failed:" in printed
+    assert "omnigent is required and was not found on PATH" in printed
+
+
+def test_doctor_reports_invalid_bundle(monkeypatch, tmp_path: Path, capsys) -> None:
+    bundle = tmp_path / "coordinator"
+    monkeypatch.setattr(cli, "find_omnigent_cli", lambda: "/bin/omnigent")
+    monkeypatch.setattr(cli, "find_antigravity_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_prime_agent_cli", lambda: None)
+    monkeypatch.setattr(
+        cli.shutil, "which", lambda name: None if name == "opencode" else f"/bin/{name}"
+    )
+
+    assert cli._doctor(bundle) == 1
+
+    printed = capsys.readouterr().out
+    assert "bundle     INVALID" in printed
+    assert "did not validate" in printed
