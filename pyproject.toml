@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "agent-os-opensource"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "A local-first task, evidence, and independent-review layer for AI coding runtimes"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

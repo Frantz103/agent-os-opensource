@@ -130,15 +130,16 @@ def _task_json(store: TaskStore, task_id: str) -> str:
 
 
 def _doctor(bundle: Path) -> int:
+    failures: list[str] = []
     checks = {
         "omnigent": find_omnigent_cli(),
         "claude": shutil.which("claude"),
         "codex": shutil.which("codex"),
     }
-    ok = True
     for name, path in checks.items():
         print(f"{name:10} {'OK ' + path if path else 'MISSING'}")
-        ok = ok and path is not None
+        if path is None:
+            failures.append(f"{name} is required and was not found on PATH")
     opencode = shutil.which("opencode")
     if opencode:
         try:
@@ -146,7 +147,7 @@ def _doctor(bundle: Path) -> int:
             check_opencode_version(version)
             print(f"{'opencode':10} OK {opencode} ({version})")
         except (OSError, OpenCodeVersionError) as error:
-            ok = False
+            failures.append(f"opencode is installed but unusable: {error}")
             print(f"{'opencode':10} INCOMPATIBLE {error}")
     else:
         print(f"{'opencode':10} OPTIONAL MISSING")
@@ -159,7 +160,7 @@ def _doctor(bundle: Path) -> int:
             rendered = ".".join(str(part) for part in version)
             print(f"{'antigravity':10} OK {antigravity} ({rendered})")
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-            ok = False
+            failures.append(f"antigravity is installed but unusable: {error}")
             print(f"{'antigravity':10} INCOMPATIBLE {error}")
     else:
         print(f"{'antigravity':10} OPTIONAL MISSING")
@@ -175,9 +176,21 @@ def _doctor(bundle: Path) -> int:
         validate_bundle(bundle)
         print(f"bundle     OK {bundle}")
     except Exception as error:
-        ok = False
+        failures.append(f"bundle {bundle} did not validate: {type(error).__name__}: {error}")
         print(f"bundle     INVALID {type(error).__name__}: {error}")
-    return 0 if ok else 1
+
+    if not failures:
+        return 0
+    print()
+    print("doctor failed:")
+    for item in failures:
+        print(f"  - {item}")
+    print(
+        "An optional runtime is safe to leave uninstalled, but one that is installed must also be "
+        "a supported version, because Agent OS may route work to it. Remove it or install a "
+        "supported release; see docs/providers.md."
+    )
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
