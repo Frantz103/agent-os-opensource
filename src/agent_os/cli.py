@@ -20,10 +20,12 @@ from agent_os.context import build_task_context
 from agent_os.models import TaskStatus
 from agent_os.runner import (
     RunPlan,
+    RuntimeTerminated,
     check_antigravity_version,
     find_antigravity_cli,
     find_omnigent_cli,
     find_prime_agent_cli,
+    install_termination_handlers,
     resolve_antigravity_version,
     run_task,
 )
@@ -195,6 +197,7 @@ def _doctor(bundle: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    install_termination_handlers()
     store = TaskStore(args.state_dir)
     bundle = args.bundle or store.state_dir / "bundles" / "coordinator"
 
@@ -294,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         return 130
+    except RuntimeTerminated as signal_name:
+        print(f"terminated on {signal_name}", file=sys.stderr)
+        return 143
 
     return 1
 
