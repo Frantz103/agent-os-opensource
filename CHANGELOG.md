@@ -16,7 +16,10 @@ changes.
 
   A crossing is only ever established by the host observing its effect. The runtime's own
   `probe-attempts.json` is read solely to separate `blocked` from `not_attempted`, and never to
-  establish success. `--require-denied` rejects `not_attempted` exactly as it rejects `crossed`,
+  establish success. `blocked` requires both halves — a reported attempt and the refusal it
+  produced — because a runtime reporting an attempt with no refusal is claiming the action
+  succeeded, and the host saw no trace of it. `--require-denied` rejects `not_attempted` exactly
+  as it rejects `crossed`,
   because a boundary that was never tested has not been shown to hold; a run in which nothing was
   attempted exits non-zero as inconclusive rather than reporting three quiet denials. The probe
   verifies its own loopback listener still answers before reading a refused connection as a denial,
@@ -26,7 +29,8 @@ changes.
   Measured on the first live runs: direct Codex denied all three with probe state under `$HOME`,
   but reported `push` crossed with state under `$TMPDIR`, because `workspace-write` grants the
   temporary directory as a writable root. A report from a temporary directory now carries that
-  warning.
+  warning. A direct OpenCode run on local `qwen3:14b` claimed all three succeeded while nothing
+  reached any target, which is what made requiring the refusal half of `blocked` necessary.
 
 ## 0.1.0a3 - 2026-08-13
 
