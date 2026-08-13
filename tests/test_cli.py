@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import signal
 from pathlib import Path
+
+import pytest
 
 from agent_os import cli
 from agent_os.models import AttemptStatus, TaskStatus
@@ -245,3 +248,34 @@ def test_doctor_reports_invalid_bundle(monkeypatch, tmp_path: Path, capsys) -> N
     printed = capsys.readouterr().out
     assert "bundle     INVALID" in printed
     assert "did not validate" in printed
+
+
+def test_termination_handler_raises_so_cleanup_can_unwind() -> None:
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        cli.install_termination_handlers()
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler)
+        with pytest.raises(cli.RuntimeTerminated, match="SIGTERM"):
+            handler(signal.SIGTERM, None)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_run_terminated_by_supervisor_exits_cleanly(monkeypatch, tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task = store.create_task(
+        title="Terminate cleanly",
+        objective="Close the attempt when a supervisor cancels the process.",
+        workspace=tmp_path,
+        acceptance_criteria=["CLI reports the terminating signal"],
+    )
+
+    def terminate(*args, **kwargs):
+        raise cli.RuntimeTerminated("SIGTERM")
+
+    monkeypatch.setattr(cli, "run_task", terminate)
+
+    assert cli.main(["--state-dir", str(state_dir), "run", task.id]) == 143
+    assert capsys.readouterr().err == "terminated on SIGTERM\n"

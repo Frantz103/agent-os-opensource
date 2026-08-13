@@ -3,6 +3,19 @@
 This project follows Semantic Versioning. Alpha releases may still contain documented breaking
 changes.
 
+## Unreleased
+
+### Fixed
+
+- A supervisor cancelling Agent OS with `SIGTERM` no longer orphans the child harness. The default
+  disposition ended the process immediately, so no `finally` block ran: the detached harness kept
+  working on the workspace after the cancelling supervisor considered the run stopped, and the
+  implementation attempt stayed `running` until a later reconcile. `SIGTERM` and `SIGHUP` now raise
+  `RuntimeTerminated`, which unwinds through the existing governed cleanup, terminates the child
+  process group, fails running child attempts, closes the attempt, and exits `143`. `SIGINT`
+  behavior is unchanged. `SIGKILL` cannot be intercepted; a supervisor that escalates to it must
+  terminate the recorded attempt process group itself.
+
 ## 0.1.0a2 - 2026-08-13
 
 ### Added
