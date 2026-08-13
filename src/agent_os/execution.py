@@ -38,6 +38,26 @@ def provider_from_model(model: str) -> str:
     return aliases.get(normalized, normalized)
 
 
+def _reject_contradictory_model(identity: ExecutionIdentity) -> None:
+    """Refuse a model whose named provider contradicts the resolved identity.
+
+    Attempt provenance and the review-independence check both read the recorded
+    provider, so a model that names a different one must not be stored beside it.
+    A bare model name belongs to the harness's own namespace and stays the
+    operator's responsibility; a ``PROVIDER/MODEL`` name is checkable, so a
+    mismatch is refused before it becomes evidence.
+    """
+    model = identity.model
+    if model is None or identity.provider is None or "/" not in model:
+        return
+    named = provider_from_model(model)
+    if named != identity.provider:
+        raise ValueError(
+            f"model {model!r} names provider {named!r}, which contradicts the "
+            f"{identity.provider!r} provider recorded for {identity.agent}"
+        )
+
+
 _PROFILES: dict[str, ExecutionIdentity] = {
     "coordinator": ExecutionIdentity(
         agent="coordinator",
@@ -164,6 +184,7 @@ def execution_identity(
 
     if identity.provider is None:
         raise ValueError(f"provider is required for {agent}")
+    _reject_contradictory_model(identity)
     return identity
 
 
