@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 from omnigent.opencode_native_app_server import (
     OpenCodeVersionError,
@@ -53,7 +54,24 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("init", help="Initialize state and generate the Omnigent bundle")
     sub.add_parser("agents", help="List NOOA-defined runtime agent variants")
-    sub.add_parser("doctor", help="Check framework CLIs and validate the bundle")
+    doctor = sub.add_parser("doctor", help="Check framework CLIs and validate the bundle")
+    doctor.add_argument(
+        "--runtime",
+        choices=[
+            "omnigent",
+            "opencode",
+            "antigravity",
+            "codex",
+            "codex-review",
+            "prime-agent",
+        ],
+        help="Evaluate admission for one exact child runtime",
+    )
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the typed agent-os.doctor.v1 report",
+    )
 
     spec = sub.add_parser("spec", help="Manage generated Omnigent agent specs")
     spec_sub = spec.add_subparsers(dest="spec_command", required=True)
@@ -171,28 +189,81 @@ def _task_json(store: TaskStore, task_id: str) -> str:
     return json.dumps(payload, indent=2)
 
 
-def _doctor(bundle: Path) -> int:
-    failures: list[str] = []
-    checks = {
+_DOCTOR_RUNTIME_REQUIREMENTS = {
+    "omnigent": {"omnigent", "claude", "codex", "bundle"},
+    "opencode": {"opencode", "bundle"},
+    "antigravity": {"antigravity", "bundle"},
+    "codex": {"codex", "bundle"},
+    "codex-review": {"codex", "bundle"},
+    "prime-agent": {"prime-agent", "bundle"},
+}
+_GLOBAL_REQUIRED = {"omnigent", "claude", "codex", "bundle"}
+
+
+class DoctorCheck(TypedDict):
+    name: str
+    status: str
+    required: bool
+    path: str | None
+    version: str | None
+    detail: str | None
+
+
+class DoctorReport(TypedDict):
+    schema_version: str
+    available: bool
+    runtime: str | None
+    checks: list[DoctorCheck]
+    failures: list[str]
+
+
+def _doctor_report(bundle: Path, *, runtime: str | None = None) -> DoctorReport:
+    """Return typed health without letting one optional runtime poison another."""
+    required = _GLOBAL_REQUIRED if runtime is None else _DOCTOR_RUNTIME_REQUIREMENTS[runtime]
+    checks: list[DoctorCheck] = []
+
+    def record(
+        name: str,
+        *,
+        status: str,
+        path: str | None = None,
+        version: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        checks.append(
+            {
+                "name": name,
+                "status": status,
+                "required": name in required,
+                "path": path,
+                "version": version,
+                "detail": detail,
+            }
+        )
+
+    core = {
         "omnigent": find_omnigent_cli(),
         "claude": shutil.which("claude"),
         "codex": shutil.which("codex"),
     }
-    for name, path in checks.items():
-        print(f"{name:10} {'OK ' + path if path else 'MISSING'}")
-        if path is None:
-            failures.append(f"{name} is required and was not found on PATH")
+    for name, path in core.items():
+        record(name, status="ok" if path else "missing", path=path)
+
     opencode = shutil.which("opencode")
     if opencode:
         try:
             version = resolve_opencode_version(opencode)
             check_opencode_version(version)
-            print(f"{'opencode':10} OK {opencode} ({version})")
+            record("opencode", status="ok", path=opencode, version=version)
         except (OSError, OpenCodeVersionError) as error:
-            failures.append(f"opencode is installed but unusable: {error}")
-            print(f"{'opencode':10} INCOMPATIBLE {error}")
+            record(
+                "opencode",
+                status="incompatible",
+                path=opencode,
+                detail=str(error),
+            )
     else:
-        print(f"{'opencode':10} OPTIONAL MISSING")
+        record("opencode", status="missing")
 
     antigravity = find_antigravity_cli()
     if antigravity:
@@ -200,12 +271,21 @@ def _doctor(bundle: Path) -> int:
             version = resolve_antigravity_version(antigravity)
             check_antigravity_version(version)
             rendered = ".".join(str(part) for part in version)
-            print(f"{'antigravity':10} OK {antigravity} ({rendered})")
+            record(
+                "antigravity",
+                status="ok",
+                path=antigravity,
+                version=rendered,
+            )
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-            failures.append(f"antigravity is installed but unusable: {error}")
-            print(f"{'antigravity':10} INCOMPATIBLE {error}")
+            record(
+                "antigravity",
+                status="incompatible",
+                path=antigravity,
+                detail=str(error),
+            )
     else:
-        print(f"{'antigravity':10} OPTIONAL MISSING")
+        record("antigravity", status="missing")
 
     optional_checks = {
         "prime-agent": find_prime_agent_cli(),
@@ -213,26 +293,92 @@ def _doctor(bundle: Path) -> int:
         "doppler": shutil.which("doppler"),
     }
     for name, path in optional_checks.items():
-        print(f"{name:10} {'OK ' + path if path else 'OPTIONAL MISSING'}")
+        record(name, status="ok" if path else "missing", path=path)
     try:
         validate_bundle(bundle)
-        print(f"bundle     OK {bundle}")
+        record("bundle", status="ok", path=str(bundle))
     except Exception as error:
-        failures.append(f"bundle {bundle} did not validate: {type(error).__name__}: {error}")
-        print(f"bundle     INVALID {type(error).__name__}: {error}")
+        record(
+            "bundle",
+            status="invalid",
+            path=str(bundle),
+            detail=f"{type(error).__name__}: {error}",
+        )
 
+    failures: list[str] = []
+    for check in checks:
+        name = str(check["name"])
+        status = str(check["status"])
+        selected_failure = bool(check["required"] and status != "ok")
+        global_incompatible = runtime is None and status in {"incompatible", "invalid"}
+        if not selected_failure and not global_incompatible:
+            continue
+        detail = str(check.get("detail") or "")
+        if status == "missing":
+            failures.append(f"{name} is required and was not found on PATH")
+        elif status == "incompatible":
+            failures.append(f"{name} is installed but unusable: {detail}")
+        elif status == "invalid":
+            failures.append(f"{name} {check.get('path')} did not validate: {detail}")
+        else:
+            failures.append(f"{name} failed its required health check: {detail or status}")
+    return {
+        "schema_version": "agent-os.doctor.v1",
+        "available": not failures,
+        "runtime": runtime,
+        "checks": checks,
+        "failures": failures,
+    }
+
+
+def _render_doctor_report(report: DoctorReport) -> None:
+    for check in report["checks"]:
+        name = str(check["name"])
+        status = str(check["status"])
+        path = check.get("path")
+        version = check.get("version")
+        detail = check.get("detail")
+        if status == "ok":
+            suffix = str(path or "")
+            if version:
+                suffix += f" ({version})"
+            print(f"{name:10} OK {suffix}".rstrip())
+        elif status == "missing":
+            label = "MISSING" if check["required"] else "OPTIONAL MISSING"
+            print(f"{name:10} {label}")
+        elif status == "incompatible":
+            print(f"{name:10} INCOMPATIBLE {detail}")
+        else:
+            print(f"{name:10} INVALID {detail}")
+
+    failures = list(report["failures"])
     if not failures:
-        return 0
+        return
     print()
     print("doctor failed:")
     for item in failures:
         print(f"  - {item}")
-    print(
-        "An optional runtime is safe to leave uninstalled, but one that is installed must also be "
-        "a supported version, because Agent OS may route work to it. Remove it or install a "
-        "supported release; see docs/providers.md."
-    )
-    return 1
+    if report["runtime"] is None:
+        print(
+            "An optional runtime is safe to leave uninstalled, but one that is installed must "
+            "also be a supported version, because Agent OS may route work to it. Remove it or "
+            "install a supported release; see docs/providers.md."
+        )
+
+
+def _doctor(
+    bundle: Path,
+    *,
+    runtime: str | None = None,
+    json_output: bool = False,
+) -> int:
+    report = _doctor_report(bundle, runtime=runtime)
+    if json_output:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        _render_doctor_report(report)
+
+    return 0 if report["available"] else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -259,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "doctor":
-            return _doctor(bundle)
+            return _doctor(bundle, runtime=args.runtime, json_output=args.json)
 
         if args.command == "spec":
             if args.spec_command == "sync":

@@ -64,6 +64,87 @@ def test_doctor_fails_loudly_for_incompatible_installed_opencode(
     assert "opencode   INCOMPATIBLE unsupported 1.18.4" in capsys.readouterr().out
 
 
+def test_runtime_scoped_doctor_does_not_fail_for_unrelated_incompatible_runtime(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    bundle = tmp_path / "coordinator"
+    sync_specs(bundle)
+    monkeypatch.setattr(cli, "find_omnigent_cli", lambda: "/bin/omnigent")
+    monkeypatch.setattr(cli, "find_prime_agent_cli", lambda: "/bin/prime-agent")
+    monkeypatch.setattr(cli, "find_antigravity_cli", lambda: "/bin/agy")
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/bin/{name}")
+
+    def antigravity_timeout(_path: str):
+        raise TimeoutError("version probe timed out")
+
+    monkeypatch.setattr(cli, "resolve_antigravity_version", antigravity_timeout)
+
+    assert cli._doctor(bundle) == 1
+    capsys.readouterr()
+    assert cli._doctor(bundle, runtime="codex", json_output=True) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["schema_version"] == "agent-os.doctor.v1"
+    assert report["available"] is True
+    assert report["runtime"] == "codex"
+    antigravity = next(item for item in report["checks"] if item["name"] == "antigravity")
+    assert antigravity == {
+        "name": "antigravity",
+        "status": "incompatible",
+        "required": False,
+        "path": "/bin/agy",
+        "version": None,
+        "detail": "version probe timed out",
+    }
+
+
+def test_runtime_scoped_doctor_fails_when_selected_runtime_is_unavailable(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    bundle = tmp_path / "coordinator"
+    sync_specs(bundle)
+    monkeypatch.setattr(cli, "find_omnigent_cli", lambda: "/bin/omnigent")
+    monkeypatch.setattr(cli, "find_prime_agent_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_antigravity_cli", lambda: None)
+    monkeypatch.setattr(
+        cli.shutil,
+        "which",
+        lambda name: None if name == "opencode" else f"/bin/{name}",
+    )
+
+    assert cli._doctor(bundle, runtime="opencode", json_output=True) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["available"] is False
+    assert report["failures"] == ["opencode is required and was not found on PATH"]
+
+
+def test_doctor_cli_accepts_runtime_and_json(monkeypatch, tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    bundle = state_dir / "bundles" / "coordinator"
+    sync_specs(bundle)
+    monkeypatch.setattr(cli, "find_omnigent_cli", lambda: "/bin/omnigent")
+    monkeypatch.setattr(cli, "find_prime_agent_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_antigravity_cli", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(cli, "resolve_opencode_version", lambda _path: "1.17.20")
+
+    assert (
+        cli.main(
+            [
+                "--state-dir",
+                str(state_dir),
+                "doctor",
+                "--runtime",
+                "codex",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["runtime"] == "codex"
+    assert report["available"] is True
+
+
 def test_run_keyboard_interrupt_exits_cleanly(monkeypatch, tmp_path: Path, capsys) -> None:
     state_dir = tmp_path / "state"
     store = TaskStore(state_dir)
