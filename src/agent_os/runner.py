@@ -1123,7 +1123,7 @@ def _usage_from_mapping(
             cache_creation_input_tokens=_token_count(
                 values.get("cache_creation_input_tokens")
             ),
-            actual_cost_usd=_money(values.get("total_cost_usd")),
+            reported_cost_usd=_money(values.get("total_cost_usd")),
         )
         for model, values in (by_model or {}).items()
     }
@@ -1134,7 +1134,7 @@ def _usage_from_mapping(
         total_tokens=_token_count(raw.get("total_tokens")),
         cache_read_input_tokens=_token_count(raw.get("cache_read_input_tokens")),
         cache_creation_input_tokens=_token_count(raw.get("cache_creation_input_tokens")),
-        actual_cost_usd=_money(raw.get("total_cost_usd")),
+        reported_cost_usd=_money(raw.get("total_cost_usd")),
         by_model=model_usage,
     )
     return usage if _has_usage(usage) else None
@@ -1161,7 +1161,7 @@ def _has_usage(usage: ModelUsage) -> bool:
             usage.total_tokens,
             usage.cache_read_input_tokens,
             usage.cache_creation_input_tokens,
-            usage.actual_cost_usd,
+            usage.reported_cost_usd,
         )
     )
 

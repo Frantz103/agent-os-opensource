@@ -206,7 +206,7 @@ def test_direct_codex_builder_executes_and_cleans_private_home(
     assert attempt.usage.cache_read_input_tokens == 80
     assert attempt.usage.output_tokens == 30
     assert attempt.usage.total_tokens == 150
-    assert attempt.usage.actual_cost_usd is None
+    assert attempt.usage.reported_cost_usd is None
     runtime_dir = store.state_dir / "runtime" / "codex" / task.id
     assert (runtime_dir / "implementation.result.txt").read_text().startswith(
         "Implementation is awaiting independent review."
@@ -785,7 +785,7 @@ def test_omnigent_attempt_preserves_persisted_subtree_usage(tmp_path: Path) -> N
     assert attempt.usage.output_tokens == 30
     assert attempt.usage.total_tokens == 210
     assert attempt.usage.cache_read_input_tokens == 30
-    assert attempt.usage.actual_cost_usd == pytest.approx(0.50)
+    assert attempt.usage.reported_cost_usd == pytest.approx(0.50)
     assert set(attempt.usage.by_model) == {"claude-test", "gpt-test"}
 
 

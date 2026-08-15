@@ -62,7 +62,8 @@ already persists provider-reported subtree token usage and dollars in its epheme
 database; the launcher gives that database an attempt-owned temporary directory and reads the
 public `load_session_usage` result after execution. Direct Codex already emits cumulative token
 usage in its terminal event. Agent OS only carries those observations on the immutable attempt
-record. It does not price subscription tokens, infer missing dollars, or copy Omnigent's rollups.
+record. It does not decide whether a reported dollar figure is subscription-equivalent or
+actually billed, price missing usage, or copy Omnigent's rollups.
 
 ## Current measured size
 

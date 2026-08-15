@@ -107,7 +107,7 @@ class ModelUsage(BaseModel):
     total_tokens: int | None = Field(default=None, ge=0)
     cache_read_input_tokens: int | None = Field(default=None, ge=0)
     cache_creation_input_tokens: int | None = Field(default=None, ge=0)
-    actual_cost_usd: float | None = Field(default=None, ge=0)
+    reported_cost_usd: float | None = Field(default=None, ge=0)
 
 
 class AttemptUsage(ModelUsage):
@@ -115,6 +115,8 @@ class AttemptUsage(ModelUsage):
 
     This is observation, not estimation. A runtime may report tokens without reporting
     dollars; callers must preserve that distinction instead of manufacturing a price.
+    A reported dollar figure is not classified as actual billing here because the runtime
+    does not know whether a harness used a subscription login or a metered API key.
     """
 
     reported_by: str = Field(min_length=1)
