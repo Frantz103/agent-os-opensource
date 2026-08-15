@@ -28,7 +28,14 @@ from omnigent.opencode_native_app_server import (
 from agent_os.context import build_task_context
 from agent_os.definitions import BuilderAgent, PrimeCoordinatorAgent
 from agent_os.execution import execution_identity, provider_from_model
-from agent_os.models import AttemptKind, AttemptRecord, AttemptStatus, TaskStatus
+from agent_os.models import (
+    AttemptKind,
+    AttemptRecord,
+    AttemptStatus,
+    AttemptUsage,
+    ModelUsage,
+    TaskStatus,
+)
 from agent_os.store import TaskStore
 from agent_os.tools import collect_workspace_diff
 
@@ -780,7 +787,14 @@ def run_task(
     environment["AGENT_OS_STATE_DIR"] = str(store.state_dir)
     environment["AGENT_OS_TASK_ID"] = task_id
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    omnigent_tmp_root: Path | None = None
     if plan.runtime == "omnigent":
+        omnigent_tmp_root = (
+            store.state_dir / "runtime" / "omnigent" / attempt.id / "tmp"
+        )
+        omnigent_tmp_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(omnigent_tmp_root, 0o700)
+        environment["TMPDIR"] = str(omnigent_tmp_root)
         # Omnigent gives OpenCode a session-owned XDG config directory, but OpenCode also
         # discovers Claude-compatible prompts/skills and ~/.agents/skills from the host HOME.
         # Disable Claude compatibility and give OpenCode a separate Agent OS config directory
@@ -820,6 +834,7 @@ def run_task(
     antigravity_results: list[dict[str, object]] = []
     opencode_results: list[dict[str, object]] = []
     codex_review_result: dict[str, object] | None = None
+    codex_usage: AttemptUsage | None = None
     try:
         with ExitStack() as stack:
             if plan.runtime == "antigravity":
@@ -868,6 +883,7 @@ def run_task(
             assert stdout is not None
 
             def stream_output() -> None:
+                nonlocal codex_usage
                 try:
                     for line in stdout:
                         sys.stdout.write(line)
@@ -884,6 +900,10 @@ def run_task(
                             terminal = _opencode_terminal_result(line)
                             if terminal is not None:
                                 opencode_results.append(terminal)
+                        if plan.runtime in {"codex", "codex-review"}:
+                            observed_usage = _codex_usage_from_event(line)
+                            if observed_usage is not None:
+                                codex_usage = observed_usage
                 except BaseException as error:
                     reader_errors.append(error)
 
@@ -925,6 +945,11 @@ def run_task(
             status=AttemptStatus.FAILED,
             summary=f"{plan.runtime} process failed: {type(error).__name__}: {error}",
             transcript_path=str(transcript_path),
+            usage=_attempt_usage(
+                plan.runtime,
+                codex_usage=codex_usage,
+                omnigent_tmp_root=omnigent_tmp_root,
+            ),
         )
         current = store.get_task(task_id)
         if current.status is TaskStatus.RUNNING:
@@ -976,6 +1001,11 @@ def run_task(
         ),
         evidence=evidence,
         transcript_path=str(transcript_path),
+        usage=_attempt_usage(
+            plan.runtime,
+            codex_usage=codex_usage,
+            omnigent_tmp_root=omnigent_tmp_root,
+        ),
     )
     current = store.get_task(task_id)
     if current.status is TaskStatus.RUNNING:
@@ -988,6 +1018,152 @@ def run_task(
     if return_code == 0 and codex_review_result is not None:
         _record_codex_review(store, task_id, plan, codex_review_result)
     return return_code
+
+
+def _attempt_usage(
+    runtime: str,
+    *,
+    codex_usage: AttemptUsage | None,
+    omnigent_tmp_root: Path | None,
+) -> AttemptUsage | None:
+    if runtime in {"codex", "codex-review"}:
+        return codex_usage
+    if runtime == "omnigent" and omnigent_tmp_root is not None:
+        return _load_omnigent_usage(omnigent_tmp_root)
+    return None
+
+
+def _codex_usage_from_event(line: str) -> AttemptUsage | None:
+    try:
+        event = json.loads(line)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(event, dict) or event.get("type") != "turn.completed":
+        return None
+    raw = event.get("usage")
+    if not isinstance(raw, dict):
+        return None
+    usage = ModelUsage(
+        input_tokens=_token_count(raw.get("input_tokens")),
+        output_tokens=_token_count(raw.get("output_tokens")),
+        total_tokens=_token_count(raw.get("total_tokens")),
+        cache_read_input_tokens=_token_count(
+            raw.get("cache_read_input_tokens", raw.get("cached_input_tokens"))
+        ),
+        cache_creation_input_tokens=_token_count(raw.get("cache_creation_input_tokens")),
+    )
+    if not _has_usage(usage):
+        return None
+    return AttemptUsage(reported_by="codex", **usage.model_dump())
+
+
+def _load_omnigent_usage(tmp_root: Path) -> AttemptUsage | None:
+    """Read Omnigent's persisted subtree usage after a ``--no-session`` run."""
+
+    from omnigent.runtime.policies.builder import load_session_usage
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    totals: dict[str, float] = {}
+    by_model: dict[str, dict[str, float]] = {}
+    for database in sorted(tmp_root.glob("ap-chat-data-*/chat.db")):
+        conversation_store = SqlAlchemyConversationStore(f"sqlite:///{database}")
+        root_ids: set[str] = set()
+        after: str | None = None
+        while True:
+            page = conversation_store.list_conversations(
+                limit=100,
+                after=after,
+                kind="default",
+                include_archived=True,
+            )
+            root_ids.update(conversation.root_conversation_id for conversation in page.data)
+            if not page.has_more or page.last_id is None:
+                break
+            after = page.last_id
+        for root_id in root_ids:
+            observed = load_session_usage(root_id, conversation_store)
+            _add_numeric_usage(totals, observed)
+            raw_by_model = observed.get("by_model")
+            if isinstance(raw_by_model, dict):
+                for model, model_usage in raw_by_model.items():
+                    if not isinstance(model, str) or not isinstance(model_usage, dict):
+                        continue
+                    _add_numeric_usage(by_model.setdefault(model, {}), model_usage)
+    return _usage_from_mapping(totals, reported_by="omnigent", by_model=by_model)
+
+
+def _add_numeric_usage(target: dict[str, float], source: dict[str, object]) -> None:
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "total_cost_usd",
+    ):
+        value = source.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+            target[key] = target.get(key, 0.0) + float(value)
+
+
+def _usage_from_mapping(
+    raw: dict[str, float],
+    *,
+    reported_by: str,
+    by_model: dict[str, dict[str, float]] | None = None,
+) -> AttemptUsage | None:
+    model_usage = {
+        model: ModelUsage(
+            input_tokens=_token_count(values.get("input_tokens")),
+            output_tokens=_token_count(values.get("output_tokens")),
+            total_tokens=_token_count(values.get("total_tokens")),
+            cache_read_input_tokens=_token_count(values.get("cache_read_input_tokens")),
+            cache_creation_input_tokens=_token_count(
+                values.get("cache_creation_input_tokens")
+            ),
+            actual_cost_usd=_money(values.get("total_cost_usd")),
+        )
+        for model, values in (by_model or {}).items()
+    }
+    usage = AttemptUsage(
+        reported_by=reported_by,
+        input_tokens=_token_count(raw.get("input_tokens")),
+        output_tokens=_token_count(raw.get("output_tokens")),
+        total_tokens=_token_count(raw.get("total_tokens")),
+        cache_read_input_tokens=_token_count(raw.get("cache_read_input_tokens")),
+        cache_creation_input_tokens=_token_count(raw.get("cache_creation_input_tokens")),
+        actual_cost_usd=_money(raw.get("total_cost_usd")),
+        by_model=model_usage,
+    )
+    return usage if _has_usage(usage) else None
+
+
+def _token_count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return int(value) if float(value).is_integer() else None
+
+
+def _money(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return float(value)
+
+
+def _has_usage(usage: ModelUsage) -> bool:
+    return any(
+        value is not None
+        for value in (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+            usage.cache_read_input_tokens,
+            usage.cache_creation_input_tokens,
+            usage.actual_cost_usd,
+        )
+    )
 
 
 def _open_private_text(path: Path):
