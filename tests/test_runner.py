@@ -789,6 +789,84 @@ def test_omnigent_attempt_preserves_persisted_subtree_usage(tmp_path: Path) -> N
     assert set(attempt.usage.by_model) == {"claude-test", "gpt-test"}
 
 
+def test_omnigent_usage_failure_does_not_replace_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_runtime = tmp_path / "fake-omnigent"
+    fake_runtime.write_text("#!/bin/sh\nexit 0\n")
+    fake_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Retain successful execution",
+        objective="Do not let optional usage observation replace runtime truth.",
+        workspace=workspace,
+        acceptance_criteria=["The attempt finalizes without usage"],
+    )
+    monkeypatch.setattr(
+        "agent_os.runner._load_omnigent_usage",
+        lambda _root: (_ for _ in ()).throw(ValueError("corrupt usage database")),
+    )
+
+    assert (
+        run_task(
+            store,
+            task.id,
+            tmp_path / "bundle",
+            omnigent_command=str(fake_runtime),
+        )
+        == 0
+    )
+
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "succeeded"
+    assert attempt.usage is None
+    assert attempt.evidence[-1] == (
+        "usage observation unavailable: ValueError: corrupt usage database"
+    )
+
+
+def test_omnigent_usage_failure_does_not_replace_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_runtime = tmp_path / "fake-omnigent"
+    fake_runtime.write_text(
+        f"#!{sys.executable}\nimport time\ntime.sleep(10)\n"
+    )
+    fake_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Retain failed execution",
+        objective="Do not let optional usage observation replace a timeout.",
+        workspace=workspace,
+        acceptance_criteria=["The attempt finalizes without usage"],
+    )
+    monkeypatch.setattr(
+        "agent_os.runner._load_omnigent_usage",
+        lambda _root: (_ for _ in ()).throw(ValueError("locked usage database")),
+    )
+
+    with pytest.raises(TimeoutError, match="omnigent process exceeded 1 seconds"):
+        run_task(
+            store,
+            task.id,
+            tmp_path / "bundle",
+            omnigent_command=str(fake_runtime),
+            timeout_seconds=1,
+        )
+
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "failed"
+    assert attempt.usage is None
+    assert attempt.evidence == [
+        "usage observation unavailable: ValueError: locked usage database"
+    ]
+    assert store.get_task(task.id).status is TaskStatus.FAILED
+
+
 @pytest.mark.parametrize(
     ("fatal_output", "summary_fragment"),
     [

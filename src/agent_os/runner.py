@@ -940,16 +940,18 @@ def run_task(
                 coordinator_attempt_id=attempt.id,
                 reason=f"{plan.runtime} coordinator terminated before child completion",
             )
+        usage, usage_warning = _attempt_usage_safely(
+            plan.runtime,
+            codex_usage=codex_usage,
+            omnigent_tmp_root=omnigent_tmp_root,
+        )
         store.finish_attempt(
             attempt.id,
             status=AttemptStatus.FAILED,
             summary=f"{plan.runtime} process failed: {type(error).__name__}: {error}",
+            evidence=[usage_warning] if usage_warning is not None else None,
             transcript_path=str(transcript_path),
-            usage=_attempt_usage(
-                plan.runtime,
-                codex_usage=codex_usage,
-                omnigent_tmp_root=omnigent_tmp_root,
-            ),
+            usage=usage,
         )
         current = store.get_task(task_id)
         if current.status is TaskStatus.RUNNING:
@@ -991,6 +993,13 @@ def run_task(
     evidence = [f"transcript: {transcript_path}"]
     if stderr_path is not None:
         evidence.append(f"stderr: {stderr_path}")
+    usage, usage_warning = _attempt_usage_safely(
+        plan.runtime,
+        codex_usage=codex_usage,
+        omnigent_tmp_root=omnigent_tmp_root,
+    )
+    if usage_warning is not None:
+        evidence.append(usage_warning)
     store.finish_attempt(
         attempt.id,
         status=status,
@@ -1001,11 +1010,7 @@ def run_task(
         ),
         evidence=evidence,
         transcript_path=str(transcript_path),
-        usage=_attempt_usage(
-            plan.runtime,
-            codex_usage=codex_usage,
-            omnigent_tmp_root=omnigent_tmp_root,
-        ),
+        usage=usage,
     )
     current = store.get_task(task_id)
     if current.status is TaskStatus.RUNNING:
@@ -1031,6 +1036,31 @@ def _attempt_usage(
     if runtime == "omnigent" and omnigent_tmp_root is not None:
         return _load_omnigent_usage(omnigent_tmp_root)
     return None
+
+
+def _attempt_usage_safely(
+    runtime: str,
+    *,
+    codex_usage: AttemptUsage | None,
+    omnigent_tmp_root: Path | None,
+) -> tuple[AttemptUsage | None, str | None]:
+    """Observe optional usage without allowing telemetry to decide execution state."""
+
+    try:
+        return (
+            _attempt_usage(
+                runtime,
+                codex_usage=codex_usage,
+                omnigent_tmp_root=omnigent_tmp_root,
+            ),
+            None,
+        )
+    except Exception as error:
+        return (
+            None,
+            "usage observation unavailable: "
+            f"{type(error).__name__}: {error}",
+        )
 
 
 def _codex_usage_from_event(line: str) -> AttemptUsage | None:
