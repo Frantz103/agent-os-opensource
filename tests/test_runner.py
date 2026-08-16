@@ -165,7 +165,9 @@ def test_direct_codex_builder_executes_and_cleans_private_home(
         "(workspace / 'codex.txt').write_text('implemented\\n')\n"
         "result = Path(args[args.index('--output-last-message') + 1])\n"
         "result.write_text('Implementation is awaiting independent review.\\n')\n"
-        "print(json.dumps({'type': 'turn.completed'}))\n"
+        "print(json.dumps({'type': 'turn.completed', 'usage': {"
+        "'input_tokens': 120, 'cached_input_tokens': 80, "
+        "'output_tokens': 30, 'total_tokens': 150}}))\n"
     )
     codex_runtime.chmod(0o700)
     store = TaskStore(tmp_path / "state")
@@ -198,6 +200,13 @@ def test_direct_codex_builder_executes_and_cleans_private_home(
     assert attempt.provider == "openai"
     assert attempt.model == "gpt-5.6-sol"
     assert attempt.status.value == "succeeded"
+    assert attempt.usage is not None
+    assert attempt.usage.reported_by == "codex"
+    assert attempt.usage.input_tokens == 120
+    assert attempt.usage.cache_read_input_tokens == 80
+    assert attempt.usage.output_tokens == 30
+    assert attempt.usage.total_tokens == 150
+    assert attempt.usage.reported_cost_usd is None
     runtime_dir = store.state_dir / "runtime" / "codex" / task.id
     assert (runtime_dir / "implementation.result.txt").read_text().startswith(
         "Implementation is awaiting independent review."
@@ -720,6 +729,142 @@ def test_omnigent_runtime_disables_ambient_opencode_skills(tmp_path: Path) -> No
         "$schema": "https://opencode.ai/config.json",
         "agent": {"build": {"tools": {"skill": False}}},
     }
+
+
+def test_omnigent_attempt_preserves_persisted_subtree_usage(tmp_path: Path) -> None:
+    fake_runtime = tmp_path / "fake-omnigent"
+    fake_runtime.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "from omnigent.stores.conversation_store.sqlalchemy_store import "
+        "SqlAlchemyConversationStore\n"
+        "database = Path(os.environ['TMPDIR']) / 'ap-chat-data-test' / 'chat.db'\n"
+        "database.parent.mkdir(parents=True)\n"
+        "store = SqlAlchemyConversationStore(f'sqlite:///{database}')\n"
+        "root = store.create_conversation(title='root')\n"
+        "child = store.create_conversation(title='child', "
+        "parent_conversation_id=root.id)\n"
+        "store.set_session_usage(root.id, {"
+        "'input_tokens': 100, 'output_tokens': 20, 'total_tokens': 120, "
+        "'total_cost_usd': 0.40, 'by_model': {"
+        "'claude-test': {'input_tokens': 100, 'output_tokens': 20, "
+        "'total_tokens': 120, 'total_cost_usd': 0.40}}})\n"
+        "store.set_session_usage(child.id, {"
+        "'input_tokens': 50, 'cache_read_input_tokens': 30, "
+        "'output_tokens': 10, 'total_tokens': 90, 'total_cost_usd': 0.10, "
+        "'by_model': {'gpt-test': {'input_tokens': 50, "
+        "'cache_read_input_tokens': 30, 'output_tokens': 10, "
+        "'total_tokens': 90, 'total_cost_usd': 0.10}}})\n"
+    )
+    fake_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Preserve Omnigent usage",
+        objective="Carry provider-reported usage across the Agent OS seam.",
+        workspace=workspace,
+        acceptance_criteria=["The coordinator attempt retains subtree usage"],
+    )
+
+    assert (
+        run_task(
+            store,
+            task.id,
+            tmp_path / "bundle",
+            omnigent_command=str(fake_runtime),
+        )
+        == 0
+    )
+
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.usage is not None
+    assert attempt.usage.reported_by == "omnigent"
+    assert attempt.usage.input_tokens == 150
+    assert attempt.usage.output_tokens == 30
+    assert attempt.usage.total_tokens == 210
+    assert attempt.usage.cache_read_input_tokens == 30
+    assert attempt.usage.reported_cost_usd == pytest.approx(0.50)
+    assert set(attempt.usage.by_model) == {"claude-test", "gpt-test"}
+
+
+def test_omnigent_usage_failure_does_not_replace_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_runtime = tmp_path / "fake-omnigent"
+    fake_runtime.write_text("#!/bin/sh\nexit 0\n")
+    fake_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Retain successful execution",
+        objective="Do not let optional usage observation replace runtime truth.",
+        workspace=workspace,
+        acceptance_criteria=["The attempt finalizes without usage"],
+    )
+    monkeypatch.setattr(
+        "agent_os.runner._load_omnigent_usage",
+        lambda _root: (_ for _ in ()).throw(ValueError("corrupt usage database")),
+    )
+
+    assert (
+        run_task(
+            store,
+            task.id,
+            tmp_path / "bundle",
+            omnigent_command=str(fake_runtime),
+        )
+        == 0
+    )
+
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "succeeded"
+    assert attempt.usage is None
+    assert attempt.evidence[-1] == (
+        "usage observation unavailable: ValueError: corrupt usage database"
+    )
+
+
+def test_omnigent_usage_failure_does_not_replace_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_runtime = tmp_path / "fake-omnigent"
+    fake_runtime.write_text(
+        f"#!{sys.executable}\nimport time\ntime.sleep(10)\n"
+    )
+    fake_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Retain failed execution",
+        objective="Do not let optional usage observation replace a timeout.",
+        workspace=workspace,
+        acceptance_criteria=["The attempt finalizes without usage"],
+    )
+    monkeypatch.setattr(
+        "agent_os.runner._load_omnigent_usage",
+        lambda _root: (_ for _ in ()).throw(ValueError("locked usage database")),
+    )
+
+    with pytest.raises(TimeoutError, match="omnigent process exceeded 1 seconds"):
+        run_task(
+            store,
+            task.id,
+            tmp_path / "bundle",
+            omnigent_command=str(fake_runtime),
+            timeout_seconds=1,
+        )
+
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "failed"
+    assert attempt.usage is None
+    assert attempt.evidence == [
+        "usage observation unavailable: ValueError: locked usage database"
+    ]
+    assert store.get_task(task.id).status is TaskStatus.FAILED
 
 
 @pytest.mark.parametrize(

@@ -17,19 +17,20 @@ from agent_os.models import (
     AttemptKind,
     AttemptRecord,
     AttemptStatus,
+    AttemptUsage,
     ReviewRecord,
     TaskSpec,
     TaskStatus,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY CHECK (key = 'schema_version'),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_meta(key, version) VALUES ('schema_version', 2);
+INSERT OR IGNORE INTO schema_meta(key, version) VALUES ('schema_version', 3);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS attempts (
     summary TEXT NOT NULL DEFAULT '',
     evidence_json TEXT NOT NULL DEFAULT '[]',
     transcript_path TEXT,
+    usage_json TEXT,
     pid INTEGER,
     started_at TEXT NOT NULL,
     finished_at TEXT
@@ -141,6 +143,11 @@ INSERT INTO schema_meta(key, version) VALUES ('schema_version', 2);
 DROP TABLE schema_meta_v1;
 """
 
+MIGRATE_V2_TO_V3 = """
+ALTER TABLE attempts ADD COLUMN usage_json TEXT;
+UPDATE schema_meta SET version = 3 WHERE key = 'schema_version';
+"""
+
 
 VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.QUEUED: {TaskStatus.RUNNING, TaskStatus.BLOCKED, TaskStatus.FAILED},
@@ -184,12 +191,15 @@ class TaskStore:
     def initialize(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.state_dir, 0o700)
-        needs_migration = self.db_path.exists() and self._legacy_schema_version() == 1
-        if needs_migration:
-            self._backup_before_migration(1)
+        current_version = self._schema_version() if self.db_path.exists() else None
+        if current_version in {1, 2}:
+            self._backup_before_migration(current_version)
         with self._connect() as connection:
-            if needs_migration:
+            if current_version == 1:
                 connection.executescript(MIGRATE_V1_TO_V2)
+                current_version = 2
+            if current_version == 2:
+                connection.executescript(MIGRATE_V2_TO_V3)
             connection.executescript(SCHEMA)
             row = connection.execute(
                 "SELECT version FROM schema_meta WHERE key = 'schema_version'"
@@ -210,7 +220,7 @@ class TaskStore:
         for path in transcripts.rglob("*"):
             os.chmod(path, 0o700 if path.is_dir() else 0o600)
 
-    def _legacy_schema_version(self) -> int | None:
+    def _schema_version(self) -> int | None:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         try:
@@ -225,6 +235,11 @@ class TaskStore:
             if columns == {"version"}:
                 row = connection.execute(
                     "SELECT max(version) AS version FROM schema_meta"
+                ).fetchone()
+                return int(row["version"]) if row and row["version"] is not None else None
+            if columns == {"key", "version"}:
+                row = connection.execute(
+                    "SELECT version FROM schema_meta WHERE key = 'schema_version'"
                 ).fetchone()
                 return int(row["version"]) if row and row["version"] is not None else None
             return None
@@ -447,6 +462,7 @@ class TaskStore:
         summary: str,
         evidence: list[str] | None = None,
         transcript_path: str | None = None,
+        usage: AttemptUsage | dict[str, Any] | None = None,
     ) -> AttemptRecord:
         status = AttemptStatus(status)
         if status is AttemptStatus.RUNNING:
@@ -459,6 +475,7 @@ class TaskStore:
                 raise KeyError(f"attempt not found: {attempt_id}")
             current = self._attempt_from_row(row)
             desired_evidence = evidence or []
+            desired_usage = AttemptUsage.model_validate(usage) if usage is not None else None
             if status is AttemptStatus.SUCCEEDED and not desired_evidence:
                 raise ValueError("successful attempts require evidence")
             if current.status is not AttemptStatus.RUNNING:
@@ -467,6 +484,7 @@ class TaskStore:
                     and current.summary == summary
                     and current.evidence == desired_evidence
                     and current.transcript_path == transcript_path
+                    and current.usage == desired_usage
                 ):
                     return current
                 raise ValueError(f"attempt is already terminal: {attempt_id}")
@@ -475,7 +493,7 @@ class TaskStore:
                 """
                 UPDATE attempts
                 SET status = ?, summary = ?, evidence_json = ?, transcript_path = ?,
-                    finished_at = ?, pid = NULL
+                    usage_json = ?, finished_at = ?, pid = NULL
                 WHERE id = ? AND status = 'running'
                 """,
                 (
@@ -483,6 +501,7 @@ class TaskStore:
                     summary,
                     json.dumps(desired_evidence),
                     transcript_path,
+                    desired_usage.model_dump_json() if desired_usage is not None else None,
                     finished_at,
                     attempt_id,
                 ),
@@ -791,6 +810,11 @@ class TaskStore:
             summary=row["summary"],
             evidence=json.loads(row["evidence_json"]),
             transcript_path=row["transcript_path"],
+            usage=(
+                AttemptUsage.model_validate_json(row["usage_json"])
+                if row["usage_json"]
+                else None
+            ),
             pid=row["pid"],
             started_at=datetime.fromisoformat(row["started_at"]),
             finished_at=(
