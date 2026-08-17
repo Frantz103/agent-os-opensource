@@ -200,6 +200,17 @@ Omnigent path or add external containment for untrusted work.
 question: when Agent OS launches it, can the agent inside write outside its workspace, reach the
 network, or push to a Git remote?
 
+Use the typed, runtime-scoped doctor when a parent scheduler has already selected one exact child
+runtime. An unrelated optional runtime remains visible in the report but cannot disable the
+selected strategy:
+
+```bash
+uv run agent-os doctor --runtime codex --json
+```
+
+The unscoped `agent-os doctor` remains deliberately strict because the ordinary Agent OS
+coordinator may route to any installed runtime.
+
 ```bash
 uv run agent-os probe --runtime codex
 uv run agent-os probe --runtime opencode --model ollama/gemma4:26b --timeout-seconds 1200

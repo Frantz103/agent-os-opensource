@@ -43,6 +43,10 @@ telemetry adapter or instrumentation implementation is maintained here.
 Agent OS reuses Omnigent's own OpenCode version resolver and validator to expose compatibility
 failures during `doctor`. No parallel compatibility logic is maintained here.
 
+The typed runtime-scoped doctor is part of the existing operator CLI seam. It reuses the same
+runtime resolvers and bundle validator, but separates one selected runtime's admission result from
+unrelated optional-runtime health so a parent scheduler can disable only the affected strategy.
+
 The direct Antigravity path is one deliberate provider-specific adapter in this release. It is
 small because `agy` already supplies subscription authentication, structured streaming, custom
 agents, and the native OS sandbox. Agent OS adds version validation, durable task attribution,
