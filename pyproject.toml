@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
   "nooa==0.0.8",
-  "omnigent==0.8.2",
+  "omnigent==0.9.0",
   # Omnigent uses broad >=0 ranges for these beta-versioned packages. Explicit
   # prerelease floors make plain pip resolve the same supported line as uv.
   "opentelemetry-instrumentation-fastapi>=0.65b0,<1",
