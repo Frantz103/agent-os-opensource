@@ -8,8 +8,8 @@ from threading import Barrier
 
 import pytest
 
-from agent_os.models import AttemptKind, AttemptStatus, TaskStatus
-from agent_os.store import SCHEMA_VERSION, TaskStore
+from agent_os.models import AttemptKind, AttemptStatus, AttemptUsage, TaskStatus
+from agent_os.store import SCHEMA, SCHEMA_VERSION, TaskStore
 
 
 def make_task(store: TaskStore, workspace: Path):
@@ -199,14 +199,28 @@ def test_terminal_attempt_write_is_idempotent_but_not_mutable(tmp_path: Path) ->
         status=AttemptStatus.SUCCEEDED,
         summary="Implemented",
         evidence=["pytest: passed"],
+        usage=AttemptUsage(
+            reported_by="codex",
+            input_tokens=120,
+            output_tokens=30,
+            total_tokens=150,
+        ),
     )
     repeated = store.finish_attempt(
         attempt.id,
         status=AttemptStatus.SUCCEEDED,
         summary="Implemented",
         evidence=["pytest: passed"],
+        usage=AttemptUsage(
+            reported_by="codex",
+            input_tokens=120,
+            output_tokens=30,
+            total_tokens=150,
+        ),
     )
     assert repeated == first
+    assert repeated.usage is not None
+    assert repeated.usage.total_tokens == 150
 
     with pytest.raises(ValueError, match="already terminal"):
         store.finish_attempt(
@@ -288,10 +302,36 @@ def test_v1_database_migrates_with_private_backup(tmp_path: Path) -> None:
     columns = {row[1] for row in migrated.execute("PRAGMA table_info(attempts)")}
     migrated.close()
     assert version == SCHEMA_VERSION
-    assert {"provider", "model", "kind", "work_item", "pid"} <= columns
+    assert {"provider", "model", "kind", "work_item", "pid", "usage_json"} <= columns
     assert database.with_suffix(".db.v1.bak").exists()
     assert database.stat().st_mode & 0o777 == 0o600
     assert database.with_suffix(".db.v1.bak").stat().st_mode & 0o777 == 0o600
+
+
+def test_v2_database_migrates_attempt_usage_with_private_backup(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    database = state / "agent_os.db"
+    connection = sqlite3.connect(database)
+    v2_schema = SCHEMA.replace(
+        "VALUES ('schema_version', 3)", "VALUES ('schema_version', 2)"
+    ).replace("    usage_json TEXT,\n", "")
+    connection.executescript(v2_schema)
+    connection.close()
+
+    store = TaskStore(state)
+    store.initialize()
+
+    migrated = sqlite3.connect(database)
+    version = migrated.execute(
+        "SELECT version FROM schema_meta WHERE key = 'schema_version'"
+    ).fetchone()[0]
+    columns = {row[1] for row in migrated.execute("PRAGMA table_info(attempts)")}
+    migrated.close()
+    assert version == SCHEMA_VERSION
+    assert "usage_json" in columns
+    assert database.with_suffix(".db.v2.bak").exists()
+    assert database.with_suffix(".db.v2.bak").stat().st_mode & 0o777 == 0o600
 
 
 def test_attempt_identity_records_kind_provider_and_model(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-os-opensource"
-version = "0.1.0a3"
+version = "0.1.0a4"
 description = "A local-first task, evidence, and independent-review layer for AI coding runtimes"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

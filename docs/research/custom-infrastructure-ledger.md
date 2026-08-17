@@ -61,24 +61,34 @@ the result against exact implementation attempts. The temporary home reuses a fi
 subscription login only for the process lifetime and is then destroyed; this remains lifecycle
 isolation rather than a model API client, persistent credential store, or general review engine.
 
+Attempt usage reuses runtime-owned observations rather than adding an accounting engine. Omnigent
+already persists provider-reported subtree token usage and dollars in its ephemeral conversation
+database; the launcher gives that database an attempt-owned temporary directory and reads the
+public `load_session_usage` result after execution. Direct Codex already emits cumulative token
+usage in its terminal event. Agent OS only carries those observations on the immutable attempt
+record. It does not decide whether a reported dollar figure is subscription-equivalent or
+actually billed, price missing usage, or copy Omnigent's rollups. Usage observation remains
+optional: an unreadable runtime database is retained as attempt evidence and cannot replace the
+runtime result or strand the attempt in a running state.
+
 ## Current measured size
 
-Verified on 2026-08-11:
+Verified on 2026-08-15:
 
 | Manual seam | Source LOC | Paths |
 | --- | ---: | --- |
-| execution identity registry | 152 | `src/agent_os/execution.py` |
-| typed task contracts | 103 | `src/agent_os/models.py` |
-| domain task persistence | 772 | `src/agent_os/store.py` |
+| execution identity registry | 177 | `src/agent_os/execution.py` |
+| typed task contracts | 121 | `src/agent_os/models.py` |
+| domain task persistence | 795 | `src/agent_os/store.py` |
 | cross-session context envelope | 62 | `src/agent_os/context.py` |
 | NOOA-to-Omnigent compiler | 276 | `src/agent_os/specs.py` |
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
 | Antigravity pre-tool policy | 105 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1230 | `src/agent_os/runner.py` |
-| operator task CLI | 259 | `src/agent_os/cli.py` |
+| multi-runtime process launcher | 1436 | `src/agent_os/runner.py` |
+| operator task CLI | 349 | `src/agent_os/cli.py` |
 | gap measurement | 34 | `scripts/custom_loc.py` |
-| **Total** | **3,227** | |
+| **Total** | **3,589** | |
 
 Refresh with:
 
