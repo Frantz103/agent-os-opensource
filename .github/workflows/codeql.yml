@@ -12,11 +12,32 @@ permissions:
   contents: read
   security-events: write
 
+env:
+  ANALYSIS_SHA: ${{ github.sha }}
+  EXACT_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  BASE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.ANALYSIS_SHA }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact CodeQL analysis identity
+        shell: bash
+        run: |
+          actual_head="$(git rev-parse HEAD)"
+          test "$actual_head" = "$ANALYSIS_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse HEAD^1)" = "$BASE_HEAD_SHA"
+            test "$(git rev-parse HEAD^2)" = "$EXACT_HEAD_SHA"
+          else
+            test "$ANALYSIS_SHA" = "$EXACT_HEAD_SHA"
+          fi
+          printf 'verified exact CodeQL analysis identity %s\n' "$actual_head"
       - uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
         with:
           languages: python
