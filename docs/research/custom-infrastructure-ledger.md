@@ -75,7 +75,7 @@ does not add remote scheduling, a provider client, a credential store, or a seco
 
 ## Current measured size
 
-Verified on 2026-08-29:
+Verified on 2026-08-30:
 
 | Manual seam | Source LOC | Paths |
 | --- | ---: | --- |
@@ -87,11 +87,11 @@ Verified on 2026-08-29:
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
 | Antigravity pre-tool policy | 105 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1718 | `src/agent_os/runner.py` |
+| multi-runtime process launcher | 1792 | `src/agent_os/runner.py` |
 | operator task CLI | 349 | `src/agent_os/cli.py` |
-| local HTTP work service | 1010 | `src/agent_os/http_contract.py`, `src/agent_os/http_service.py` |
+| local HTTP work service | 1021 | `src/agent_os/http_contract.py`, `src/agent_os/http_service.py` |
 | gap measurement | 38 | `scripts/custom_loc.py` |
-| **Total** | **5,036** | |
+| **Total** | **5,121** | |
 
 Refresh with:
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -534,6 +536,131 @@ def test_direct_codex_unverified_teardown_reconciles_blocked_with_evidence(
     assert any("process-group: pgid=" in item for item in attempt.evidence)
     assert any("teardown unverified" in item for item in attempt.evidence)
     assert any("operator-action:" in item for item in attempt.evidence)
+
+
+@pytest.mark.parametrize(
+    ("process_table", "expected_absent"),
+    [
+        ("    1     1\n  501   500\n", True),
+        ("    1     1\n43210 43210\n", False),
+    ],
+)
+def test_darwin_eperm_requires_full_process_table_absence(
+    monkeypatch: pytest.MonkeyPatch,
+    process_table: str,
+    expected_absent: bool,
+) -> None:
+    class ProcessProbe:
+        pid = 43210
+
+        def poll(self) -> int:
+            return 0
+
+    def deny_group_probe(_process_group_id: int, _received: int) -> None:
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    def inspect_process_table(command: tuple[str, ...], **kwargs: Any):
+        assert command == ("/bin/ps", "-A", "-o", "pid=,pgid=")
+        assert kwargs == {
+            "capture_output": True,
+            "check": False,
+            "text": True,
+            "timeout": 5.0,
+        }
+        return subprocess.CompletedProcess(command, 0, stdout=process_table, stderr="")
+
+    monkeypatch.setattr(runner_module.sys, "platform", "darwin")
+    monkeypatch.setattr(runner_module.os, "killpg", deny_group_probe)
+    monkeypatch.setattr(runner_module.subprocess, "run", inspect_process_table)
+
+    assert runner_module._process_group_absent(cast(Any, ProcessProbe())) is expected_absent
+
+
+@pytest.mark.parametrize(
+    ("result", "error"),
+    [
+        (subprocess.CompletedProcess((), 0, stdout="", stderr=""), "probe was empty"),
+        (
+            subprocess.CompletedProcess((), 0, stdout="not-a-process-row\n", stderr=""),
+            "malformed row 1",
+        ),
+        (
+            subprocess.CompletedProcess((), 1, stdout="", stderr="not permitted\n"),
+            "probe exited 1: not permitted",
+        ),
+    ],
+)
+def test_darwin_eperm_ambiguous_process_table_remains_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+    result: subprocess.CompletedProcess[str],
+    error: str,
+) -> None:
+    monkeypatch.setattr(runner_module.subprocess, "run", lambda *_args, **_kwargs: result)
+
+    with pytest.raises(ProcessGroupTeardownUnverified, match=error):
+        runner_module._darwin_process_group_absent(43210)
+
+
+def test_darwin_signal_eperm_defers_completion_to_zero_member_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ProcessProbe:
+        pid = 43210
+
+        def poll(self) -> int:
+            return 0
+
+    received_signals: list[int] = []
+
+    def transient_group_probe(_process_group_id: int, received: int) -> None:
+        received_signals.append(received)
+        if len(received_signals) == 1:
+            return
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    process_table = subprocess.CompletedProcess(
+        (), 0, stdout="    1     1\n  501   500\n", stderr=""
+    )
+    monkeypatch.setattr(runner_module.sys, "platform", "darwin")
+    monkeypatch.setattr(runner_module.os, "killpg", transient_group_probe)
+    monkeypatch.setattr(
+        runner_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: process_table,
+    )
+
+    evidence = runner_module._terminate_process(cast(Any, ProcessProbe()))
+
+    assert received_signals == [0, signal.SIGTERM, 0]
+    assert evidence == "process-group teardown: pgid=43210 proven absent after SIGTERM"
+
+
+def test_darwin_signal_eperm_with_matching_group_remains_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ProcessProbe:
+        pid = 43210
+
+        def poll(self) -> int:
+            return 0
+
+    def deny_group_signal(_process_group_id: int, _received: int) -> None:
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    process_table = subprocess.CompletedProcess(
+        (), 0, stdout="    1     1\n43210 43210\n", stderr=""
+    )
+    monkeypatch.setattr(runner_module.sys, "platform", "darwin")
+    monkeypatch.setattr(runner_module.os, "killpg", deny_group_signal)
+    monkeypatch.setattr(
+        runner_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: process_table,
+    )
+    monkeypatch.setattr(runner_module, "_PROCESS_GROUP_GRACE_SECONDS", 0)
+
+    with pytest.raises(ProcessGroupTeardownUnverified, match="remained observable"):
+        runner_module._terminate_process(cast(Any, ProcessProbe()))
 
 
 def test_direct_codex_prelaunch_cancellation_does_not_start_an_attempt(tmp_path: Path) -> None:

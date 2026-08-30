@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import inspect
 import json
 import os
@@ -106,6 +107,7 @@ _PROVIDER_ENV = {
 
 _PROCESS_GROUP_GRACE_SECONDS = 5.0
 _PROCESS_GROUP_POLL_SECONDS = 0.05
+_DARWIN_PROCESS_TABLE_COMMAND = ("/bin/ps", "-A", "-o", "pid=,pgid=")
 
 _OPENCODE_ISOLATION_CONFIG = {
     "$schema": "https://opencode.ai/config.json",
@@ -1784,6 +1786,11 @@ def _signal_process_group(process_group_id: int, received: signal.Signals) -> No
     except ProcessLookupError:
         return
     except OSError as error:
+        if sys.platform == "darwin" and error.errno == errno.EPERM:
+            # XNU can return EPERM for a zombie-only group. A readable table lets the
+            # caller's bounded absence loop decide; EPERM itself proves neither outcome.
+            _darwin_process_group_absent(process_group_id)
+            return
         raise ProcessGroupTeardownUnverified(
             process_group_id,
             f"{received.name} failed: {type(error).__name__}: {error}",
@@ -1814,11 +1821,84 @@ def _process_group_absent(process: subprocess.Popen[str]) -> bool:
     except ProcessLookupError:
         return True
     except OSError as error:
+        if sys.platform == "darwin" and error.errno == errno.EPERM:
+            return _darwin_process_group_absent(process.pid)
         raise ProcessGroupTeardownUnverified(
             process.pid,
             f"absence probe failed: {type(error).__name__}: {error}",
         ) from error
     return False
+
+
+def _darwin_process_group_absent(process_group_id: int) -> bool:
+    """Resolve Darwin's ambiguous ``killpg(pgid, 0)`` EPERM via the full process table."""
+    try:
+        result = subprocess.run(
+            _DARWIN_PROCESS_TABLE_COMMAND,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=_PROCESS_GROUP_GRACE_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ProcessGroupTeardownUnverified(
+            process_group_id,
+            (
+                "killpg(0) returned EPERM and the Darwin process-table probe failed: "
+                f"{type(error).__name__}: {error}"
+            ),
+        ) from error
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "no stderr"
+        raise ProcessGroupTeardownUnverified(
+            process_group_id,
+            (
+                "killpg(0) returned EPERM and the Darwin process-table probe exited "
+                f"{result.returncode}: {detail}"
+            ),
+        )
+
+    observed_process = False
+    for line_number, line in enumerate(result.stdout.splitlines(), start=1):
+        columns = line.split()
+        if not columns:
+            continue
+        if len(columns) != 2:
+            raise ProcessGroupTeardownUnverified(
+                process_group_id,
+                (
+                    "killpg(0) returned EPERM and the Darwin process-table probe "
+                    f"returned malformed row {line_number}: {line!r}"
+                ),
+            )
+        try:
+            process_id, observed_group_id = (int(column) for column in columns)
+        except ValueError as error:
+            raise ProcessGroupTeardownUnverified(
+                process_group_id,
+                (
+                    "killpg(0) returned EPERM and the Darwin process-table probe "
+                    f"returned malformed row {line_number}: {line!r}"
+                ),
+            ) from error
+        if process_id <= 0 or observed_group_id <= 0:
+            raise ProcessGroupTeardownUnverified(
+                process_group_id,
+                (
+                    "killpg(0) returned EPERM and the Darwin process-table probe "
+                    f"returned invalid row {line_number}: {line!r}"
+                ),
+            )
+        observed_process = True
+        if observed_group_id == process_group_id:
+            return False
+
+    if not observed_process:
+        raise ProcessGroupTeardownUnverified(
+            process_group_id,
+            "killpg(0) returned EPERM and the Darwin process-table probe was empty",
+        )
+    return True
 
 
 def _terminate_non_posix_process(process: subprocess.Popen[str]) -> str:

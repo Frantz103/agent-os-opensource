@@ -42,7 +42,7 @@ from agent_os.http_contract import (
 )
 from agent_os.models import AttemptRecord, AttemptStatus, TaskSpec, TaskStatus
 from agent_os.runner import run_task
-from agent_os.store import TaskStore
+from agent_os.store import TaskStore, validate_task_id
 
 SERVICE_TOKEN_ENV = "AGENT_OS_SERVICE_TOKEN"
 ARTIFACT_DIRECTORY = "artifacts"
@@ -496,6 +496,17 @@ def _open_directory(path: str | Path, *, dir_fd: int | None = None) -> int:
     return descriptor
 
 
+def _open_validated_task_directory(directory_fd: int, task_id: str) -> int:
+    """Open a stored task directory without using request text as an OS path."""
+
+    canonical_task_id = validate_task_id(task_id)
+    with os.scandir(directory_fd) as entries:
+        for entry in entries:
+            if entry.name == canonical_task_id:
+                return _open_directory(entry.name, dir_fd=directory_fd)
+    raise ValueError("validated task workspace is unavailable")
+
+
 def _safe_relative_parts(relative: str | Path) -> tuple[str, ...]:
     path = Path(relative)
     parts = path.parts
@@ -546,13 +557,16 @@ def _artifact_response(artifact: _ArtifactFile, *, work_id: UUID) -> ArtifactRes
 
 def _open_artifact_directory(supervisor: ExecutionSupervisor, work_id: UUID) -> int:
     task = supervisor.get_task(work_id)
-    expected_workspace = supervisor.workspace_root / str(work_id)
+    task_id = validate_task_id(task.id)
+    if task_id != str(work_id):
+        raise ValueError("stored task identity does not match the requested work id")
+    expected_workspace = supervisor.workspace_root / task_id
     if task.workspace != expected_workspace:
         raise ValueError("task workspace is outside the service-owned work root")
     root_descriptor = _open_directory(supervisor.workspace_root)
     workspace_descriptor: int | None = None
     try:
-        workspace_descriptor = _open_directory(str(work_id), dir_fd=root_descriptor)
+        workspace_descriptor = _open_validated_task_directory(root_descriptor, task_id)
         return _open_directory(ARTIFACT_DIRECTORY, dir_fd=workspace_descriptor)
     finally:
         if workspace_descriptor is not None:

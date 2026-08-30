@@ -571,6 +571,35 @@ def test_artifact_evidence_and_cost_endpoints_return_content_not_host_paths(
         assert terminal_cancel.json()["cancellation_requested"] is False
 
 
+@pytest.mark.parametrize("invalid_task_id", ["../institution-work-123", "a" * 129])
+def test_task_workspace_descriptor_requires_a_bounded_single_component_id(
+    tmp_path: Path,
+    invalid_task_id: str,
+) -> None:
+    workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
+    task_id = "institution-work-123"
+    task_workspace = workspace_root / task_id
+    task_workspace.mkdir()
+    root_descriptor = http_service._open_directory(workspace_root)
+    workspace_descriptor: int | None = None
+    try:
+        workspace_descriptor = http_service._open_validated_task_directory(
+            root_descriptor,
+            task_id,
+        )
+        assert os.fstat(workspace_descriptor).st_ino == task_workspace.stat().st_ino
+        with pytest.raises(ValueError, match="task_id"):
+            http_service._open_validated_task_directory(
+                root_descriptor,
+                invalid_task_id,
+            )
+    finally:
+        if workspace_descriptor is not None:
+            os.close(workspace_descriptor)
+        os.close(root_descriptor)
+
+
 def test_artifact_download_fails_closed_when_entry_is_swapped_after_enumeration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
