@@ -10,6 +10,9 @@ permissions:
 
 env:
   UV_FROZEN: "1"
+  EXACT_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  PR_MERGE_SHA: ${{ github.sha }}
+  BASE_HEAD_SHA: ${{ github.event.pull_request.base.sha }}
 
 jobs:
   test:
@@ -22,6 +25,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXACT_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXACT_HEAD_SHA"
       - name: Install Omnigent Linux sandbox dependency
         if: runner.os == 'Linux'
         run: |
@@ -39,6 +47,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXACT_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXACT_HEAD_SHA"
       - name: Install Omnigent Linux sandbox dependency
         run: |
           sudo apt-get update
@@ -58,6 +71,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXACT_HEAD_SHA }}
+          persist-credentials: false
+      - name: Verify exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXACT_HEAD_SHA"
       - name: Install Omnigent Linux sandbox dependency
         run: |
           sudo apt-get update
@@ -77,4 +95,91 @@ jobs:
           cd "$smoke_dir"
           /tmp/agent-os-wheel-venv/bin/agent-os --state-dir state init
           /tmp/agent-os-wheel-venv/bin/agent-os --state-dir state spec check
+          /tmp/agent-os-wheel-venv/bin/agent-os-service --help
+          test -f state/bundles/coordinator/config.yaml
+
+  merge-test:
+    name: merge test (${{ matrix.os }}, Python ${{ matrix.python }})
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PR_MERGE_SHA }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact merge, base, and candidate heads
+        shell: bash
+        run: |
+          actual_merge="$(git rev-parse HEAD)"
+          actual_base="$(git rev-parse HEAD^1)"
+          actual_candidate="$(git rev-parse HEAD^2)"
+          test "$actual_merge" = "$PR_MERGE_SHA"
+          test "$actual_base" = "$BASE_HEAD_SHA"
+          test "$actual_candidate" = "$EXACT_HEAD_SHA"
+          printf 'verified merge %s for base %s and candidate %s\n' \
+            "$actual_merge" "$actual_base" "$actual_candidate"
+      - name: Install Omnigent Linux sandbox dependency
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run pytest
+
+  merge-quality:
+    name: pull-request merge quality and package
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PR_MERGE_SHA }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact merge, base, and candidate heads
+        shell: bash
+        run: |
+          actual_merge="$(git rev-parse HEAD)"
+          actual_base="$(git rev-parse HEAD^1)"
+          actual_candidate="$(git rev-parse HEAD^2)"
+          test "$actual_merge" = "$PR_MERGE_SHA"
+          test "$actual_base" = "$BASE_HEAD_SHA"
+          test "$actual_candidate" = "$EXACT_HEAD_SHA"
+          printf 'verified merge %s for base %s and candidate %s\n' \
+            "$actual_merge" "$actual_base" "$actual_candidate"
+      - name: Install Omnigent Linux sandbox dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run ruff check .
+      - run: uv run pyright
+      - run: uv run agent-os --bundle agents/coordinator spec check
+      - run: uv run pip-audit --cache-dir /tmp/pip-audit-cache
+      - run: uv build
+      - name: Install merge wheel outside the source checkout
+        shell: bash
+        run: |
+          wheel="$(find dist -name '*.whl' -print -quit)"
+          uv venv /tmp/agent-os-merge-wheel-venv --python 3.13
+          uv pip install --python /tmp/agent-os-merge-wheel-venv/bin/python "$wheel"
+          smoke_dir="$(mktemp -d)"
+          cd "$smoke_dir"
+          /tmp/agent-os-merge-wheel-venv/bin/agent-os --state-dir state init
+          /tmp/agent-os-merge-wheel-venv/bin/agent-os --state-dir state spec check
+          /tmp/agent-os-merge-wheel-venv/bin/agent-os-service --help
           test -f state/bundles/coordinator/config.yaml

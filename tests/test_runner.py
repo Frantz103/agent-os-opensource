@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
+from threading import Event
 from typing import Any, cast
 
 import pytest
 
+import agent_os.runner as runner_module
 from agent_os.models import TaskStatus
 from agent_os.runner import (
+    ProcessGroupSurvivedLeader,
+    ProcessGroupTeardownUnverified,
     RunPlan,
     _antigravity_policy_plugin,
     _antigravity_terminal_result,
@@ -49,6 +58,28 @@ def test_dry_run_builds_omnigent_command_without_starting_process(tmp_path: Path
     assert "<task-context-redacted>" in result.shell_command()
     assert task.id in result.shell_command(reveal_context=True)
     assert store.list_attempts(task.id) == []
+
+
+@pytest.mark.parametrize("task_id", ["../escape", r"..\escape", ".", ".."])
+def test_runner_rejects_unsafe_task_id_before_creating_runtime_paths(
+    tmp_path: Path,
+    task_id: str,
+) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+
+    with pytest.raises(ValueError, match="task_id must be"):
+        run_task(
+            store,
+            task_id,
+            tmp_path / "bundle",
+            dry_run=True,
+            runtime="codex",
+            codex_command="must-not-launch",
+        )
+
+    assert not state_dir.exists()
+    assert not (tmp_path / "escape").exists()
 
 
 def test_dry_run_can_use_subscription_codex_reviewer(
@@ -214,6 +245,320 @@ def test_direct_codex_builder_executes_and_cleans_private_home(
     assert (runtime_dir / "implementation.result.txt").stat().st_mode & 0o777 == 0o600
     assert list(runtime_dir.glob("codex-home.*")) == []
     assert source_auth.read_text() == '{"test_token":"subscription-login"}\n'
+
+
+def test_direct_codex_cancellation_terminates_process_group_and_reconciles(
+    tmp_path: Path,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("process-group cancellation requires POSIX")
+    codex_runtime = tmp_path / "codex"
+    codex_runtime.write_text(
+        f"#!{sys.executable}\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "workspace = Path(args[args.index('--cd') + 1])\n"
+        "child_code = '''import signal\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "def stop(_signum, _frame):\n"
+        "    Path(sys.argv[1]).write_text('terminated\\\\n')\n"
+        "    raise SystemExit(0)\n"
+        "signal.signal(signal.SIGTERM, stop)\n"
+        "Path(sys.argv[2]).write_text('ready\\\\n')\n"
+        "time.sleep(30)\n'''\n"
+        "child = subprocess.Popen([sys.executable, '-c', child_code, "
+        "str(workspace / 'child-terminated'), str(workspace / 'child-ready')])\n"
+        "(workspace / 'child.pid').write_text(str(child.pid))\n"
+        "sys.stdin.read()\n"
+        "time.sleep(30)\n"
+    )
+    codex_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Cancel direct Codex",
+        objective="Terminate the complete direct Codex process group.",
+        workspace=workspace,
+        acceptance_criteria=["No runtime process remains active"],
+    )
+    cancel_event = Event()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            run_task,
+            store,
+            task.id,
+            tmp_path / "unused-bundle",
+            runtime="codex",
+            codex_command=str(codex_runtime),
+            timeout_seconds=30,
+            cancel_event=cancel_event,
+        )
+        child_ready = workspace / "child-ready"
+        deadline = time.monotonic() + 5
+        while not child_ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert child_ready.read_text() == "ready\n"
+        cancel_event.set()
+        assert future.result(timeout=10) == 130
+
+    marker = workspace / "child-terminated"
+    deadline = time.monotonic() + 2
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert marker.read_text() == "terminated\n"
+    assert store.get_task(task.id).status is TaskStatus.CANCELLED
+    attempts = store.list_attempts(task.id)
+    assert len(attempts) == 1
+    assert attempts[0].status.value == "cancelled"
+    assert attempts[0].pid is None
+    assert "cancelled by its supervisor" in attempts[0].summary
+
+
+def test_direct_codex_cancellation_sigkills_term_ignoring_descendant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("process-group cancellation requires POSIX")
+    monkeypatch.setattr(runner_module, "_PROCESS_GROUP_GRACE_SECONDS", 0.2)
+    codex_runtime = tmp_path / "codex"
+    codex_runtime.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "workspace = Path(args[args.index('--cd') + 1])\n"
+        "child_code = '''import signal\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "Path(sys.argv[1]).write_text('ready\\\\n')\n"
+        "time.sleep(30)\n'''\n"
+        "child = subprocess.Popen([sys.executable, '-c', child_code, "
+        "str(workspace / 'child-ready')])\n"
+        "(workspace / 'child.pid').write_text(str(child.pid))\n"
+        "(workspace / 'process-group.id').write_text(str(os.getpgrp()))\n"
+        "sys.stdin.read()\n"
+        "time.sleep(30)\n"
+    )
+    codex_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Cancel stubborn direct Codex",
+        objective="Escalate cancellation for a TERM-ignoring descendant.",
+        workspace=workspace,
+        acceptance_criteria=["The complete process group is proven absent"],
+    )
+    cancel_event = Event()
+    process_group_id: int | None = None
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                run_task,
+                store,
+                task.id,
+                tmp_path / "unused-bundle",
+                runtime="codex",
+                codex_command=str(codex_runtime),
+                timeout_seconds=30,
+                cancel_event=cancel_event,
+            )
+            child_ready = workspace / "child-ready"
+            deadline = time.monotonic() + 5
+            while not child_ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert child_ready.read_text() == "ready\n"
+            process_group_id = int((workspace / "process-group.id").read_text())
+            cancel_event.set()
+            assert future.result(timeout=10) == 130
+    finally:
+        cancel_event.set()
+        if process_group_id is not None:
+            with suppress(ProcessLookupError):
+                os.killpg(process_group_id, signal.SIGKILL)
+
+    assert process_group_id is not None
+    with pytest.raises(ProcessLookupError):
+        os.killpg(process_group_id, 0)
+    assert store.get_task(task.id).status is TaskStatus.CANCELLED
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "cancelled"
+    assert any("proven absent after SIGTERM and SIGKILL" in item for item in attempt.evidence)
+
+
+def test_direct_codex_normal_exit_with_descendant_blocks_after_teardown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("process-group reconciliation requires POSIX")
+    monkeypatch.setattr(runner_module, "_PROCESS_GROUP_GRACE_SECONDS", 0.2)
+    codex_runtime = tmp_path / "codex"
+    codex_runtime.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "workspace = Path(args[args.index('--cd') + 1])\n"
+        "child_code = '''import signal\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "Path(sys.argv[1]).write_text('ready\\\\n')\n"
+        "time.sleep(30)\n'''\n"
+        "child = subprocess.Popen(\n"
+        "    [sys.executable, '-c', child_code, str(workspace / 'child-ready')],\n"
+        "    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,\n"
+        ")\n"
+        "(workspace / 'process-group.id').write_text(str(os.getpgrp()))\n"
+        "deadline = time.monotonic() + 5\n"
+        "while not (workspace / 'child-ready').exists() and time.monotonic() < deadline:\n"
+        "    time.sleep(0.01)\n"
+        "os._exit(0)\n"
+    )
+    codex_runtime.chmod(0o700)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Reject an orphaned Codex descendant",
+        objective="Require process-group absence before reviewable state.",
+        workspace=workspace,
+        acceptance_criteria=["A leader exit cannot hide a descendant"],
+    )
+
+    with pytest.raises(ProcessGroupSurvivedLeader, match="outlived its runtime leader"):
+        run_task(
+            store,
+            task.id,
+            tmp_path / "unused-bundle",
+            runtime="codex",
+            codex_command=str(codex_runtime),
+            timeout_seconds=30,
+        )
+
+    process_group_id = int((workspace / "process-group.id").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.killpg(process_group_id, 0)
+    assert store.get_task(task.id).status is TaskStatus.BLOCKED
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "failed"
+    assert any(
+        "descendant remained after the runtime leader exited" in item
+        for item in attempt.evidence
+    )
+    assert any("proven absent after SIGTERM and SIGKILL" in item for item in attempt.evidence)
+
+
+def test_direct_codex_unverified_teardown_reconciles_blocked_with_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("process-group reconciliation requires POSIX")
+    codex_runtime = tmp_path / "codex"
+    codex_runtime.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "workspace = Path(args[args.index('--cd') + 1])\n"
+        "(workspace / 'runtime-ready').write_text('ready\\n')\n"
+        "sys.stdin.read()\n"
+        "time.sleep(30)\n"
+    )
+    codex_runtime.chmod(0o700)
+    real_terminate = runner_module._terminate_process
+
+    def terminate_without_proof(process) -> str:
+        real_terminate(process)
+        raise ProcessGroupTeardownUnverified(
+            process.pid,
+            "injected process-group absence probe ambiguity",
+        )
+
+    monkeypatch.setattr(runner_module, "_terminate_process", terminate_without_proof)
+    store = TaskStore(tmp_path / "state")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Block uncertain Codex cancellation",
+        objective="Never call an unverified teardown cancelled.",
+        workspace=workspace,
+        acceptance_criteria=["Ambiguous teardown remains blocked with recovery evidence"],
+    )
+    cancel_event = Event()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            run_task,
+            store,
+            task.id,
+            tmp_path / "unused-bundle",
+            runtime="codex",
+            codex_command=str(codex_runtime),
+            timeout_seconds=30,
+            cancel_event=cancel_event,
+        )
+        ready = workspace / "runtime-ready"
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.read_text() == "ready\n"
+        cancel_event.set()
+        with pytest.raises(ProcessGroupTeardownUnverified, match="could not be verified"):
+            future.result(timeout=10)
+
+    assert store.get_task(task.id).status is TaskStatus.BLOCKED
+    attempt = store.list_attempts(task.id)[0]
+    assert attempt.status.value == "failed"
+    assert any("process-group: pgid=" in item for item in attempt.evidence)
+    assert any("teardown unverified" in item for item in attempt.evidence)
+    assert any("operator-action:" in item for item in attempt.evidence)
+
+
+def test_direct_codex_prelaunch_cancellation_does_not_start_an_attempt(tmp_path: Path) -> None:
+    store = TaskStore(tmp_path / "state")
+    task = store.create_task(
+        title="Cancel before launch",
+        objective="Do not start external I/O after cancellation.",
+        workspace=tmp_path,
+        acceptance_criteria=["No attempt starts"],
+    )
+    cancel_event = Event()
+    cancel_event.set()
+
+    result = run_task(
+        store,
+        task.id,
+        tmp_path / "unused-bundle",
+        runtime="codex",
+        codex_command="must-not-launch",
+        cancel_event=cancel_event,
+    )
+
+    assert result == 130
+    assert store.get_task(task.id).status is TaskStatus.CANCELLED
+    assert store.list_attempts(task.id) == []
 
 
 def test_direct_opencode_builder_is_isolated_and_attributed(tmp_path: Path) -> None:

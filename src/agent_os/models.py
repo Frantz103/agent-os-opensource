@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def utc_now() -> datetime:
@@ -21,6 +21,7 @@ class TaskStatus(StrEnum):
     BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class AttemptStatus(StrEnum):
@@ -115,12 +116,62 @@ class AttemptUsage(ModelUsage):
 
     This is observation, not estimation. A runtime may report tokens without reporting
     dollars; callers must preserve that distinction instead of manufacturing a price.
-    A reported dollar figure is not classified as actual billing here because the runtime
-    does not know whether a harness used a subscription login or a metered API key.
+    A runtime-reported dollar figure is observation unless the caller classifies it as a
+    billing receipt and supplies the exact receipt evidence reference.
     """
 
     reported_by: str = Field(min_length=1)
+    derived_cost_usd: float | None = Field(default=None, ge=0)
+    cost_source: Literal[
+        "unknown",
+        "runtime_reported",
+        "provider_rate_derived",
+        "billing_receipt",
+    ] = "unknown"
+    cost_evidence_ref: str | None = None
     by_model: dict[str, ModelUsage] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_cost_gets_explicit_provenance(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "cost_source" in value:
+            return value
+        normalized = dict(value)
+        if normalized.get("derived_cost_usd") is not None:
+            normalized["cost_source"] = "provider_rate_derived"
+        elif normalized.get("reported_cost_usd") is not None:
+            normalized["cost_source"] = "runtime_reported"
+        else:
+            normalized["cost_source"] = "unknown"
+        return normalized
+
+    @model_validator(mode="after")
+    def cost_has_explicit_provenance(self) -> Self:
+        if self.reported_by != self.reported_by.strip():
+            raise ValueError("reported_by must be canonical text")
+        if self.cost_evidence_ref is not None and (
+            not self.cost_evidence_ref or self.cost_evidence_ref != self.cost_evidence_ref.strip()
+        ):
+            raise ValueError("cost_evidence_ref must be canonical text")
+        if self.reported_cost_usd is not None and self.derived_cost_usd is not None:
+            raise ValueError("reported and derived cost must remain separate")
+        if self.cost_source == "unknown":
+            if self.reported_cost_usd is not None or self.derived_cost_usd is not None:
+                raise ValueError("unknown cost provenance cannot include a cost amount")
+        elif self.cost_source == "runtime_reported":
+            if self.reported_cost_usd is None or self.derived_cost_usd is not None:
+                raise ValueError("runtime-reported cost requires only reported_cost_usd")
+        elif self.cost_source == "provider_rate_derived":
+            if self.derived_cost_usd is None or self.reported_cost_usd is not None:
+                raise ValueError("provider-rate-derived cost requires only derived_cost_usd")
+            if self.cost_evidence_ref is None:
+                raise ValueError("provider-rate-derived cost requires evidence")
+        elif self.cost_source == "billing_receipt":
+            if self.reported_cost_usd is None or self.derived_cost_usd is not None:
+                raise ValueError("billing-receipt cost requires only reported_cost_usd")
+            if self.cost_evidence_ref is None:
+                raise ValueError("billing-receipt cost requires evidence")
+        return self
 
 
 class AttemptRecord(BaseModel):
