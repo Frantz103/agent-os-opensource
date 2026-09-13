@@ -18,12 +18,6 @@ def test_policy_allows_bounded_workspace_work(tmp_path: Path) -> None:
     target = tmp_path / "src" / "module.py"
 
     assert evaluate(_call("view_file", AbsolutePath=str(target)), tmp_path)["decision"] == "allow"
-    assert (
-        evaluate(
-            _call("run_command", CommandLine="pytest tests", Cwd=str(tmp_path)), tmp_path
-        )["decision"]
-        == "allow"
-    )
 
 
 @pytest.mark.parametrize("tool", ["search_web", "read_url_content", "call_mcp_tool"])
@@ -35,12 +29,21 @@ def test_policy_denies_network_and_ambient_tools(tmp_path: Path, tool: str) -> N
 
 
 @pytest.mark.parametrize(
-    "command", ["git push origin main", "curl https://example.com", "rm -rf ."]
+    "command",
+    [
+        "pytest tests",
+        "curl\thttps://example.com",
+        "curl${IFS}https://example.com",
+        "python -c 'import urllib.request; urllib.request.urlopen(\"https://example.com\")'",
+        "rm -fr .",
+        "git -c alias.p=push p origin main",
+    ],
 )
-def test_policy_denies_outward_or_destructive_commands(tmp_path: Path, command: str) -> None:
+def test_policy_denies_all_commands(tmp_path: Path, command: str) -> None:
     decision = evaluate(_call("run_command", CommandLine=command, Cwd=str(tmp_path)), tmp_path)
 
-    assert decision == {"decision": "deny", "reason": "outward or destructive command denied"}
+    assert decision["decision"] == "deny"
+    assert "outside" in decision["reason"]
 
 
 def test_policy_denies_paths_outside_workspace(tmp_path: Path) -> None:

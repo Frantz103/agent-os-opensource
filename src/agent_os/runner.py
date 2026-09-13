@@ -166,7 +166,6 @@ tools:
   - replace_file_content
   - multi_replace_file_content
   - write_to_file
-  - run_command
 mainAgent: true
 subagent: false
 inheritMcp: false
