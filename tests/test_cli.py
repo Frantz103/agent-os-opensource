@@ -12,9 +12,7 @@ from agent_os.specs import sync_specs
 from agent_os.store import TaskStore
 
 
-def test_init_uses_state_owned_bundle_and_generates_valid_specs(
-    tmp_path: Path, capsys
-) -> None:
+def test_init_uses_state_owned_bundle_and_generates_valid_specs(tmp_path: Path, capsys) -> None:
     state_dir = tmp_path / "private-state"
 
     assert cli.main(["--state-dir", str(state_dir), "init"]) == 0
@@ -300,19 +298,27 @@ def _succeeded_implementation(store: TaskStore, tmp_path: Path):
     return task, attempt
 
 
-def test_owner_verdict_completes_the_task(tmp_path: Path, capsys) -> None:
+def test_owner_verdict_completes_the_task(tmp_path: Path, capsys, monkeypatch) -> None:
     state_dir = tmp_path / "state"
     store = TaskStore(state_dir)
     task, attempt = _succeeded_implementation(store, tmp_path)
+    monkeypatch.setattr(cli, "_confirm_owner_review", lambda *args: None)
 
     assert (
         cli.main(
             [
-                "--state-dir", str(state_dir), "review", task.id,
-                "--attempt", attempt.id,
-                "--verdict", "approve",
-                "--summary", "Owner checked the diff and the test.",
-                "--evidence", "git diff shows only the intended file",
+                "--state-dir",
+                str(state_dir),
+                "review",
+                task.id,
+                "--attempt",
+                attempt.id,
+                "--verdict",
+                "approve",
+                "--summary",
+                "Owner checked the diff and the test.",
+                "--evidence",
+                "git diff shows only the intended file",
             ]
         )
         == 0
@@ -326,19 +332,26 @@ def test_owner_verdict_completes_the_task(tmp_path: Path, capsys) -> None:
     assert review.attempt_id == attempt.id
 
 
-def test_owner_approval_without_evidence_is_refused(tmp_path: Path, capsys) -> None:
+def test_owner_approval_without_evidence_is_refused(tmp_path: Path, capsys, monkeypatch) -> None:
     """An owner verdict is a review, not a rubber stamp."""
     state_dir = tmp_path / "state"
     store = TaskStore(state_dir)
     task, attempt = _succeeded_implementation(store, tmp_path)
+    monkeypatch.setattr(cli, "_confirm_owner_review", lambda *args: None)
 
     assert (
         cli.main(
             [
-                "--state-dir", str(state_dir), "review", task.id,
-                "--attempt", attempt.id,
-                "--verdict", "approve",
-                "--summary", "Looks fine.",
+                "--state-dir",
+                str(state_dir),
+                "review",
+                task.id,
+                "--attempt",
+                attempt.id,
+                "--verdict",
+                "approve",
+                "--summary",
+                "Looks fine.",
             ]
         )
         == 2
@@ -347,19 +360,27 @@ def test_owner_approval_without_evidence_is_refused(tmp_path: Path, capsys) -> N
     assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW
 
 
-def test_owner_request_changes_blocks_the_task(tmp_path: Path, capsys) -> None:
+def test_owner_request_changes_blocks_the_task(tmp_path: Path, capsys, monkeypatch) -> None:
     state_dir = tmp_path / "state"
     store = TaskStore(state_dir)
     task, attempt = _succeeded_implementation(store, tmp_path)
+    monkeypatch.setattr(cli, "_confirm_owner_review", lambda *args: None)
 
     assert (
         cli.main(
             [
-                "--state-dir", str(state_dir), "review", task.id,
-                "--attempt", attempt.id,
-                "--verdict", "request_changes",
-                "--summary", "The test does not cover the stated criterion.",
-                "--issue", "missing coverage",
+                "--state-dir",
+                str(state_dir),
+                "review",
+                task.id,
+                "--attempt",
+                attempt.id,
+                "--verdict",
+                "request_changes",
+                "--summary",
+                "The test does not cover the stated criterion.",
+                "--issue",
+                "missing coverage",
             ]
         )
         == 0
@@ -367,21 +388,64 @@ def test_owner_request_changes_blocks_the_task(tmp_path: Path, capsys) -> None:
     assert store.get_task(task.id).status is TaskStatus.BLOCKED
 
 
-def test_owner_verdict_requires_an_exact_attempt(tmp_path: Path, capsys) -> None:
+def test_owner_verdict_requires_an_exact_attempt(tmp_path: Path, capsys, monkeypatch) -> None:
     state_dir = tmp_path / "state"
     store = TaskStore(state_dir)
     task, _ = _succeeded_implementation(store, tmp_path)
+    monkeypatch.setattr(cli, "_confirm_owner_review", lambda *args: None)
 
     assert (
         cli.main(
             [
-                "--state-dir", str(state_dir), "review", task.id,
-                "--attempt", "att_does_not_exist",
-                "--verdict", "approve",
-                "--summary", "Approving without naming the real attempt.",
-                "--evidence", "none",
+                "--state-dir",
+                str(state_dir),
+                "review",
+                task.id,
+                "--attempt",
+                "att_does_not_exist",
+                "--verdict",
+                "approve",
+                "--summary",
+                "Approving without naming the real attempt.",
+                "--evidence",
+                "none",
             ]
         )
         == 2
     )
     assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW
+
+
+def test_owner_verdict_requires_the_operators_controlling_terminal(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, attempt = _succeeded_implementation(store, tmp_path)
+
+    def no_controlling_terminal(*args, **kwargs):
+        raise OSError("no controlling terminal")
+
+    monkeypatch.setattr("builtins.open", no_controlling_terminal)
+    assert (
+        cli.main(
+            [
+                "--state-dir",
+                str(state_dir),
+                "review",
+                task.id,
+                "--attempt",
+                attempt.id,
+                "--verdict",
+                "approve",
+                "--summary",
+                "Forged review.",
+                "--evidence",
+                "attacker-controlled evidence",
+            ]
+        )
+        == 2
+    )
+    assert "interactive controlling terminal" in capsys.readouterr().err
+    assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW
+    assert store.list_reviews(task.id) == []

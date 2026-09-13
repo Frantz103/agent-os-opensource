@@ -59,11 +59,11 @@ isolation rather than a model API client, persistent credential store, or genera
 
 ## Current measured size
 
-Verified on 2026-08-11:
+Verified on 2026-08-13:
 
 | Manual seam | Source LOC | Paths |
 | --- | ---: | --- |
-| execution identity registry | 152 | `src/agent_os/execution.py` |
+| execution identity registry | 177 | `src/agent_os/execution.py` |
 | typed task contracts | 103 | `src/agent_os/models.py` |
 | domain task persistence | 772 | `src/agent_os/store.py` |
 | cross-session context envelope | 62 | `src/agent_os/context.py` |
@@ -71,10 +71,10 @@ Verified on 2026-08-11:
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
 | Antigravity pre-tool policy | 105 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1230 | `src/agent_os/runner.py` |
-| operator task CLI | 259 | `src/agent_os/cli.py` |
+| multi-runtime process launcher | 1251 | `src/agent_os/runner.py` |
+| operator task CLI | 367 | `src/agent_os/cli.py` |
 | gap measurement | 34 | `scripts/custom_loc.py` |
-| **Total** | **3,227** | |
+| **Total** | **3,381** | |
 
 Refresh with:
 
