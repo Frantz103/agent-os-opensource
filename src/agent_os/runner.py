@@ -776,9 +776,14 @@ def run_task(
         {"anthropic", "openai"} if plan.runtime == "omnigent" else {plan.provider}
     )
     blocked_names = {"ANTHROPIC_API_KEY"} if plan.runtime == "omnigent" else set()
+    if plan.runtime == "prime-agent":
+        # Prime executes untrusted shell/IPython code and does not use the Agent OS tool
+        # bridge. Do not disclose the durable ledger, even through AGENT_OS_ALLOWED_ENV.
+        blocked_names.update({"AGENT_OS_STATE_DIR", "AGENT_OS_TASK_ID"})
     environment = runtime_environment(providers=providers, blocked_names=blocked_names)
-    environment["AGENT_OS_STATE_DIR"] = str(store.state_dir)
-    environment["AGENT_OS_TASK_ID"] = task_id
+    if plan.runtime != "prime-agent":
+        environment["AGENT_OS_STATE_DIR"] = str(store.state_dir)
+        environment["AGENT_OS_TASK_ID"] = task_id
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     if plan.runtime == "omnigent":
         # Omnigent gives OpenCode a session-owned XDG config directory, but OpenCode also

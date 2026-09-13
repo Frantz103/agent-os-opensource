@@ -634,6 +634,45 @@ def test_prime_agent_requires_declared_intelligence_provider(tmp_path: Path) -> 
         )
 
 
+def test_prime_agent_cannot_access_agent_os_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_runtime = tmp_path / "prime-agent"
+    fake_runtime.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "assert 'AGENT_OS_STATE_DIR' not in os.environ\n"
+        "assert 'AGENT_OS_TASK_ID' not in os.environ\n"
+    )
+    fake_runtime.chmod(0o700)
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("AGENT_OS_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("AGENT_OS_TASK_ID", "ambient-task")
+    monkeypatch.setenv("AGENT_OS_ALLOWED_ENV", "AGENT_OS_STATE_DIR,AGENT_OS_TASK_ID")
+    store = TaskStore(state_dir)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = store.create_task(
+        title="Isolated Prime runtime",
+        objective="Implement without access to the durable task ledger.",
+        workspace=workspace,
+        acceptance_criteria=["The implementation awaits independent review"],
+    )
+
+    result = run_task(
+        store,
+        task.id,
+        tmp_path / "unused-bundle",
+        runtime="prime-agent",
+        prime_agent_command=str(fake_runtime),
+        provider="openai",
+        timeout_seconds=30,
+    )
+
+    assert result == 0
+    assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW
+
+
 def test_runtime_environment_is_allowlisted(monkeypatch) -> None:
     monkeypatch.setenv("PATH", "/bin")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
