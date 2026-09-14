@@ -42,7 +42,7 @@ jobs:
         with:
           languages: python
       - id: analyze
-        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         with:
           output: ${{ runner.temp }}/codeql-results
           # Code scanning uploads are unavailable on a private personal repository.
