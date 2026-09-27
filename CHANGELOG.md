@@ -5,7 +5,16 @@ changes.
 
 ## Unreleased
 
+## 0.1.0a4 - 2026-08-15
+
 ### Added
+
+- Provider-reported token usage and runtime-reported dollar observations now survive the Agent OS
+  runner boundary on immutable attempt records, including per-model Omnigent subtree usage and
+  direct Codex terminal-event usage. These observations remain explicitly distinct from estimated
+  cost and authoritative billed cost.
+- Usage collection is failure-contained: an unreadable runtime usage database records an evidence
+  warning without masking the execution result or leaving the attempt running.
 
 - A runtime conformance probe. `agent-os probe --runtime RUNTIME` runs one authorized attempt that
   tries to write outside its workspace, reach the network, and push to a Git remote, then reports

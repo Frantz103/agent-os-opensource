@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import inspect
 import json
 import os
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,8 +30,15 @@ from omnigent.opencode_native_app_server import (
 from agent_os.context import build_task_context
 from agent_os.definitions import BuilderAgent, PrimeCoordinatorAgent
 from agent_os.execution import execution_identity, provider_from_model
-from agent_os.models import AttemptKind, AttemptRecord, AttemptStatus, TaskStatus
-from agent_os.store import TaskStore
+from agent_os.models import (
+    AttemptKind,
+    AttemptRecord,
+    AttemptStatus,
+    AttemptUsage,
+    ModelUsage,
+    TaskStatus,
+)
+from agent_os.store import TaskStore, validate_task_id
 from agent_os.tools import collect_workspace_diff
 
 
@@ -95,6 +104,10 @@ _PROVIDER_ENV = {
     "ollama": set(),
     "google": set(),
 }
+
+_PROCESS_GROUP_GRACE_SECONDS = 5.0
+_PROCESS_GROUP_POLL_SECONDS = 0.05
+_DARWIN_PROCESS_TABLE_COMMAND = ("/bin/ps", "-A", "-o", "pid=,pgid=")
 
 _OPENCODE_ISOLATION_CONFIG = {
     "$schema": "https://opencode.ai/config.json",
@@ -670,9 +683,15 @@ def run_task(
     timeout_seconds: int = 1_800,
     provider: str | None = None,
     model: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> RunPlan | int:
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
+    task_id = validate_task_id(task_id)
+    if cancel_event is not None and runtime != "codex":
+        raise ValueError("cancel_event applies only to the direct Codex runtime")
+    if cancel_event is not None and os.name != "posix":
+        raise ValueError("direct Codex cancellation requires POSIX process-group support")
     if runtime == "omnigent":
         if timeout_seconds > OMNIGENT_HEADLESS_MAX_SECONDS:
             raise ValueError(
@@ -738,6 +757,10 @@ def run_task(
     if dry_run:
         return plan
 
+    if cancel_event is not None and cancel_event.is_set():
+        store.cancel_task(task_id, reason="direct Codex cancellation requested before launch")
+        return 130
+
     task = store.get_task(task_id)
     if task.status in {
         TaskStatus.QUEUED,
@@ -780,7 +803,14 @@ def run_task(
     environment["AGENT_OS_STATE_DIR"] = str(store.state_dir)
     environment["AGENT_OS_TASK_ID"] = task_id
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    omnigent_tmp_root: Path | None = None
     if plan.runtime == "omnigent":
+        omnigent_tmp_root = (
+            store.state_dir / "runtime" / "omnigent" / attempt.id / "tmp"
+        )
+        omnigent_tmp_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(omnigent_tmp_root, 0o700)
+        environment["TMPDIR"] = str(omnigent_tmp_root)
         # Omnigent gives OpenCode a session-owned XDG config directory, but OpenCode also
         # discovers Claude-compatible prompts/skills and ~/.agents/skills from the host HOME.
         # Disable Claude compatibility and give OpenCode a separate Agent OS config directory
@@ -815,11 +845,14 @@ def run_task(
     workspace = plan.workspace or plan.cwd
 
     process: subprocess.Popen[str] | None = None
+    reader: threading.Thread | None = None
+    teardown_evidence: str | None = None
     runtime_failures: list[str] = []
     reader_errors: list[BaseException] = []
     antigravity_results: list[dict[str, object]] = []
     opencode_results: list[dict[str, object]] = []
     codex_review_result: dict[str, object] | None = None
+    codex_usage: AttemptUsage | None = None
     try:
         with ExitStack() as stack:
             if plan.runtime == "antigravity":
@@ -843,6 +876,8 @@ def run_task(
                 if stderr_path is not None
                 else subprocess.STDOUT
             )
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeCancellationRequested("process-group teardown: not launched")
             process = subprocess.Popen(
                 plan.command,
                 cwd=plan.cwd,
@@ -868,6 +903,7 @@ def run_task(
             assert stdout is not None
 
             def stream_output() -> None:
+                nonlocal codex_usage
                 try:
                     for line in stdout:
                         sys.stdout.write(line)
@@ -884,13 +920,36 @@ def run_task(
                             terminal = _opencode_terminal_result(line)
                             if terminal is not None:
                                 opencode_results.append(terminal)
+                        if plan.runtime in {"codex", "codex-review"}:
+                            observed_usage = _codex_usage_from_event(line)
+                            if observed_usage is not None:
+                                codex_usage = observed_usage
                 except BaseException as error:
                     reader_errors.append(error)
 
             reader = threading.Thread(target=stream_output, name=f"agent-os-{attempt.id}")
             reader.start()
             try:
-                return_code = process.wait(timeout=timeout_seconds)
+                return_code = _wait_for_process(
+                    process,
+                    timeout_seconds=timeout_seconds,
+                    cancel_event=cancel_event,
+                )
+                if plan.runtime in {"codex", "codex-review"}:
+                    if _process_group_absent(process):
+                        teardown_evidence = (
+                            f"process-group teardown: pgid={process.pid} "
+                            "proven absent on leader exit"
+                        )
+                    else:
+                        teardown_evidence = _terminate_process(process)
+                        if cancel_event is not None and cancel_event.is_set():
+                            raise RuntimeCancellationRequested(teardown_evidence)
+                        raise ProcessGroupSurvivedLeader(
+                            process.pid,
+                            "a descendant remained after the runtime leader exited",
+                            teardown_evidence,
+                        )
             except subprocess.TimeoutExpired as error:
                 _terminate_process(process)
                 raise TimeoutError(
@@ -902,6 +961,9 @@ def run_task(
                 raise RuntimeError("runtime output reader did not stop")
             if reader_errors:
                 raise RuntimeError(f"runtime output reader failed: {reader_errors[0]}")
+            if cancel_event is not None and cancel_event.is_set():
+                assert teardown_evidence is not None
+                raise RuntimeCancellationRequested(teardown_evidence)
             if plan.runtime in {"codex", "codex-review"}:
                 output_name = (
                     "implementation.result.txt"
@@ -911,8 +973,56 @@ def run_task(
                 with suppress(FileNotFoundError):
                     os.chmod(plan.cwd / output_name, 0o600)
     except BaseException as error:
-        if process is not None and process.poll() is None:
-            _terminate_process(process)
+        original_error = error
+        process_group_error: (
+            ProcessGroupTeardownUnverified | ProcessGroupSurvivedLeader | None
+        ) = (
+            error
+            if isinstance(
+                error,
+                (ProcessGroupTeardownUnverified, ProcessGroupSurvivedLeader),
+            )
+            else None
+        )
+        if isinstance(error, RuntimeCancellationRequested):
+            teardown_evidence = error.teardown_evidence
+        if process is None:
+            teardown_evidence = teardown_evidence or "process-group teardown: not launched"
+        elif process_group_error is None and teardown_evidence is None:
+            try:
+                teardown_evidence = _terminate_process(process)
+            except ProcessGroupTeardownUnverified as cleanup_error:
+                process_group_error = cleanup_error
+                error = cleanup_error
+        if reader is not None and reader.is_alive() and process_group_error is None:
+            reader.join(timeout=5)
+        if isinstance(error, RuntimeCancellationRequested):
+            if teardown_evidence is None:
+                error = RuntimeError(
+                    "direct Codex cancellation lacks verified process-group teardown"
+                )
+            elif reader is not None and reader.is_alive():
+                error = RuntimeError("runtime output reader did not stop after cancellation")
+            elif reader_errors:
+                error = RuntimeError(
+                    f"runtime output reader failed during cancellation: {reader_errors[0]}"
+                )
+            else:
+                usage, usage_warning = _attempt_usage_safely(
+                    plan.runtime,
+                    codex_usage=codex_usage,
+                    omnigent_tmp_root=omnigent_tmp_root,
+                )
+                return _finish_cancelled_run(
+                    store,
+                    task_id=task_id,
+                    attempt=attempt,
+                    transcript_path=transcript_path,
+                    stderr_path=stderr_path,
+                    usage=usage,
+                    usage_warning=usage_warning,
+                    teardown_evidence=teardown_evidence,
+                )
         if plan.kind is AttemptKind.COORDINATOR:
             _fail_running_child_attempts(
                 store,
@@ -920,15 +1030,53 @@ def run_task(
                 coordinator_attempt_id=attempt.id,
                 reason=f"{plan.runtime} coordinator terminated before child completion",
             )
+        usage, usage_warning = _attempt_usage_safely(
+            plan.runtime,
+            codex_usage=codex_usage,
+            omnigent_tmp_root=omnigent_tmp_root,
+        )
+        evidence = [usage_warning] if usage_warning is not None else []
+        if process_group_error is not None:
+            operator_action = (
+                "operator-action: verify and terminate the recorded process group before retrying"
+                if isinstance(process_group_error, ProcessGroupTeardownUnverified)
+                else "operator-action: inspect and remove the descendant launch before retrying"
+            )
+            evidence.extend(
+                [
+                    f"transcript: {transcript_path}",
+                    f"process-group: pgid={process_group_error.process_group_id}",
+                    f"process-group-blocked: {process_group_error.reason}",
+                    process_group_error.teardown_evidence,
+                    operator_action,
+                ]
+            )
+            if stderr_path is not None:
+                evidence.append(f"stderr: {stderr_path}")
+        elif teardown_evidence is not None and plan.runtime in {"codex", "codex-review"}:
+            evidence.append(teardown_evidence)
+        summary = (
+            f"{plan.runtime} process blocked by process-group reconciliation: "
+            f"{process_group_error}"
+            if process_group_error is not None
+            else f"{plan.runtime} process failed: {type(error).__name__}: {error}"
+        )
         store.finish_attempt(
             attempt.id,
             status=AttemptStatus.FAILED,
-            summary=f"{plan.runtime} process failed: {type(error).__name__}: {error}",
+            summary=summary,
+            evidence=evidence,
             transcript_path=str(transcript_path),
+            usage=usage,
         )
         current = store.get_task(task_id)
         if current.status is TaskStatus.RUNNING:
-            store.transition(task_id, TaskStatus.FAILED, reason=f"{plan.runtime} process exception")
+            target = TaskStatus.BLOCKED if process_group_error is not None else TaskStatus.FAILED
+            store.transition(task_id, target, reason=summary)
+        if process_group_error is not None:
+            if process_group_error is original_error:
+                raise
+            raise process_group_error from original_error
         raise
     incomplete_children = (
         _fail_running_child_attempts(
@@ -966,6 +1114,26 @@ def run_task(
     evidence = [f"transcript: {transcript_path}"]
     if stderr_path is not None:
         evidence.append(f"stderr: {stderr_path}")
+    usage, usage_warning = _attempt_usage_safely(
+        plan.runtime,
+        codex_usage=codex_usage,
+        omnigent_tmp_root=omnigent_tmp_root,
+    )
+    if usage_warning is not None:
+        evidence.append(usage_warning)
+    if teardown_evidence is not None:
+        evidence.append(teardown_evidence)
+    if cancel_event is not None and cancel_event.is_set():
+        return _finish_cancelled_run(
+            store,
+            task_id=task_id,
+            attempt=attempt,
+            transcript_path=transcript_path,
+            stderr_path=stderr_path,
+            usage=usage,
+            usage_warning=usage_warning,
+            teardown_evidence=teardown_evidence,
+        )
     store.finish_attempt(
         attempt.id,
         status=status,
@@ -976,6 +1144,7 @@ def run_task(
         ),
         evidence=evidence,
         transcript_path=str(transcript_path),
+        usage=usage,
     )
     current = store.get_task(task_id)
     if current.status is TaskStatus.RUNNING:
@@ -988,6 +1157,214 @@ def run_task(
     if return_code == 0 and codex_review_result is not None:
         _record_codex_review(store, task_id, plan, codex_review_result)
     return return_code
+
+
+def _attempt_usage(
+    runtime: str,
+    *,
+    codex_usage: AttemptUsage | None,
+    omnigent_tmp_root: Path | None,
+) -> AttemptUsage | None:
+    if runtime in {"codex", "codex-review"}:
+        return codex_usage
+    if runtime == "omnigent" and omnigent_tmp_root is not None:
+        return _load_omnigent_usage(omnigent_tmp_root)
+    return None
+
+
+def _attempt_usage_safely(
+    runtime: str,
+    *,
+    codex_usage: AttemptUsage | None,
+    omnigent_tmp_root: Path | None,
+) -> tuple[AttemptUsage | None, str | None]:
+    """Observe optional usage without allowing telemetry to decide execution state."""
+
+    try:
+        return (
+            _attempt_usage(
+                runtime,
+                codex_usage=codex_usage,
+                omnigent_tmp_root=omnigent_tmp_root,
+            ),
+            None,
+        )
+    except Exception as error:
+        return (
+            None,
+            "usage observation unavailable: "
+            f"{type(error).__name__}: {error}",
+        )
+
+
+def _finish_cancelled_run(
+    store: TaskStore,
+    *,
+    task_id: str,
+    attempt: AttemptRecord,
+    transcript_path: Path,
+    stderr_path: Path | None,
+    usage: AttemptUsage | None,
+    usage_warning: str | None,
+    teardown_evidence: str | None,
+) -> int:
+    if teardown_evidence is None:
+        raise RuntimeError("cannot record cancellation without verified process-group teardown")
+    evidence = [f"transcript: {transcript_path}"]
+    if stderr_path is not None:
+        evidence.append(f"stderr: {stderr_path}")
+    if usage_warning is not None:
+        evidence.append(usage_warning)
+    evidence.append(teardown_evidence)
+    store.finish_attempt(
+        attempt.id,
+        status=AttemptStatus.CANCELLED,
+        summary="direct Codex execution cancelled by its supervisor",
+        evidence=evidence,
+        transcript_path=str(transcript_path),
+        usage=usage,
+    )
+    current = store.get_task(task_id)
+    if current.status is TaskStatus.RUNNING:
+        store.cancel_task(task_id, reason="direct Codex cancellation completed")
+    elif current.status is not TaskStatus.CANCELLED:
+        raise RuntimeError("task changed before direct Codex cancellation could be recorded")
+    return 130
+
+
+def _codex_usage_from_event(line: str) -> AttemptUsage | None:
+    try:
+        event = json.loads(line)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(event, dict) or event.get("type") != "turn.completed":
+        return None
+    raw = event.get("usage")
+    if not isinstance(raw, dict):
+        return None
+    usage = ModelUsage(
+        input_tokens=_token_count(raw.get("input_tokens")),
+        output_tokens=_token_count(raw.get("output_tokens")),
+        total_tokens=_token_count(raw.get("total_tokens")),
+        cache_read_input_tokens=_token_count(
+            raw.get("cache_read_input_tokens", raw.get("cached_input_tokens"))
+        ),
+        cache_creation_input_tokens=_token_count(raw.get("cache_creation_input_tokens")),
+    )
+    if not _has_usage(usage):
+        return None
+    return AttemptUsage(reported_by="codex", **usage.model_dump())
+
+
+def _load_omnigent_usage(tmp_root: Path) -> AttemptUsage | None:
+    """Read Omnigent's persisted subtree usage after a ``--no-session`` run."""
+
+    from omnigent.runtime.policies.builder import load_session_usage
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    totals: dict[str, float] = {}
+    by_model: dict[str, dict[str, float]] = {}
+    for database in sorted(tmp_root.glob("ap-chat-data-*/chat.db")):
+        conversation_store = SqlAlchemyConversationStore(f"sqlite:///{database}")
+        root_ids: set[str] = set()
+        after: str | None = None
+        while True:
+            page = conversation_store.list_conversations(
+                limit=100,
+                after=after,
+                kind="default",
+                include_archived=True,
+            )
+            root_ids.update(conversation.root_conversation_id for conversation in page.data)
+            if not page.has_more or page.last_id is None:
+                break
+            after = page.last_id
+        for root_id in root_ids:
+            observed = load_session_usage(root_id, conversation_store)
+            _add_numeric_usage(totals, observed)
+            raw_by_model = observed.get("by_model")
+            if isinstance(raw_by_model, dict):
+                for model, model_usage in raw_by_model.items():
+                    if not isinstance(model, str) or not isinstance(model_usage, dict):
+                        continue
+                    _add_numeric_usage(by_model.setdefault(model, {}), model_usage)
+    return _usage_from_mapping(totals, reported_by="omnigent", by_model=by_model)
+
+
+def _add_numeric_usage(target: dict[str, float], source: dict[str, object]) -> None:
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "total_cost_usd",
+    ):
+        value = source.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0:
+            target[key] = target.get(key, 0.0) + float(value)
+
+
+def _usage_from_mapping(
+    raw: dict[str, float],
+    *,
+    reported_by: str,
+    by_model: dict[str, dict[str, float]] | None = None,
+) -> AttemptUsage | None:
+    reported_cost_usd = _money(raw.get("total_cost_usd"))
+    model_usage = {
+        model: ModelUsage(
+            input_tokens=_token_count(values.get("input_tokens")),
+            output_tokens=_token_count(values.get("output_tokens")),
+            total_tokens=_token_count(values.get("total_tokens")),
+            cache_read_input_tokens=_token_count(values.get("cache_read_input_tokens")),
+            cache_creation_input_tokens=_token_count(
+                values.get("cache_creation_input_tokens")
+            ),
+            reported_cost_usd=_money(values.get("total_cost_usd")),
+        )
+        for model, values in (by_model or {}).items()
+    }
+    usage = AttemptUsage(
+        reported_by=reported_by,
+        input_tokens=_token_count(raw.get("input_tokens")),
+        output_tokens=_token_count(raw.get("output_tokens")),
+        total_tokens=_token_count(raw.get("total_tokens")),
+        cache_read_input_tokens=_token_count(raw.get("cache_read_input_tokens")),
+        cache_creation_input_tokens=_token_count(raw.get("cache_creation_input_tokens")),
+        reported_cost_usd=reported_cost_usd,
+        cost_source="runtime_reported" if reported_cost_usd is not None else "unknown",
+        by_model=model_usage,
+    )
+    return usage if _has_usage(usage) else None
+
+
+def _token_count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return int(value) if float(value).is_integer() else None
+
+
+def _money(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return float(value)
+
+
+def _has_usage(usage: ModelUsage) -> bool:
+    return any(
+        value is not None
+        for value in (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+            usage.cache_read_input_tokens,
+            usage.cache_creation_input_tokens,
+            usage.reported_cost_usd,
+        )
+    )
 
 
 def _open_private_text(path: Path):
@@ -1318,6 +1695,41 @@ class RuntimeTerminated(BaseException):
     """
 
 
+class RuntimeCancellationRequested(BaseException):
+    """Raised after a direct Codex process group has accepted cancellation."""
+
+    def __init__(self, teardown_evidence: str) -> None:
+        self.teardown_evidence = teardown_evidence
+        super().__init__(teardown_evidence)
+
+
+class ProcessGroupTeardownUnverified(RuntimeError):
+    """Raised when the owned process group cannot be proven absent."""
+
+    def __init__(self, process_group_id: int, reason: str) -> None:
+        self.process_group_id = process_group_id
+        self.reason = reason
+        self.teardown_evidence = f"process-group teardown unverified: {reason}"
+        super().__init__(
+            f"process group {process_group_id} teardown could not be verified: {reason}"
+        )
+
+
+class ProcessGroupSurvivedLeader(RuntimeError):
+    """Raised when a runtime leader exits while an owned descendant remains."""
+
+    def __init__(
+        self,
+        process_group_id: int,
+        reason: str,
+        teardown_evidence: str,
+    ) -> None:
+        self.process_group_id = process_group_id
+        self.reason = reason
+        self.teardown_evidence = teardown_evidence
+        super().__init__(f"process group {process_group_id} outlived its runtime leader: {reason}")
+
+
 def install_termination_handlers() -> None:
     """Turn supervisor stop signals into an exception that unwinds.
 
@@ -1340,17 +1752,197 @@ def install_termination_handlers() -> None:
             signal.signal(received, stop)
 
 
-def _terminate_process(process: subprocess.Popen[str]) -> None:
+def _terminate_process(process: subprocess.Popen[str]) -> str:
+    if os.name != "posix":
+        return _terminate_non_posix_process(process)
+
+    process_group_id = process.pid
+    if _wait_for_process_group_absence(process, timeout_seconds=0):
+        return f"process-group teardown: pgid={process_group_id} proven already absent"
+    _signal_process_group(process_group_id, signal.SIGTERM)
+    if _wait_for_process_group_absence(
+        process,
+        timeout_seconds=_PROCESS_GROUP_GRACE_SECONDS,
+    ):
+        return f"process-group teardown: pgid={process_group_id} proven absent after SIGTERM"
+    _signal_process_group(process_group_id, signal.SIGKILL)
+    if _wait_for_process_group_absence(
+        process,
+        timeout_seconds=_PROCESS_GROUP_GRACE_SECONDS,
+    ):
+        return (
+            f"process-group teardown: pgid={process_group_id} proven absent after "
+            "SIGTERM and SIGKILL"
+        )
+    raise ProcessGroupTeardownUnverified(
+        process_group_id,
+        "the group remained observable after SIGTERM and SIGKILL",
+    )
+
+
+def _signal_process_group(process_group_id: int, received: signal.Signals) -> None:
     try:
-        if os.name == "posix":
-            os.killpg(process.pid, signal.SIGTERM)
-        else:
-            process.terminate()
-        process.wait(timeout=5)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        if process.poll() is None:
-            if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-            process.wait(timeout=5)
+        os.killpg(process_group_id, received)
+    except ProcessLookupError:
+        return
+    except OSError as error:
+        if sys.platform == "darwin" and error.errno == errno.EPERM:
+            # XNU can return EPERM for a zombie-only group. A readable table lets the
+            # caller's bounded absence loop decide; EPERM itself proves neither outcome.
+            _darwin_process_group_absent(process_group_id)
+            return
+        raise ProcessGroupTeardownUnverified(
+            process_group_id,
+            f"{received.name} failed: {type(error).__name__}: {error}",
+        ) from error
+
+
+def _wait_for_process_group_absence(
+    process: subprocess.Popen[str],
+    *,
+    timeout_seconds: float,
+) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if _process_group_absent(process):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(_PROCESS_GROUP_POLL_SECONDS, remaining))
+
+
+def _process_group_absent(process: subprocess.Popen[str]) -> bool:
+    process.poll()
+    if os.name != "posix":
+        return process.returncode is not None
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError as error:
+        if sys.platform == "darwin" and error.errno == errno.EPERM:
+            return _darwin_process_group_absent(process.pid)
+        raise ProcessGroupTeardownUnverified(
+            process.pid,
+            f"absence probe failed: {type(error).__name__}: {error}",
+        ) from error
+    return False
+
+
+def _darwin_process_group_absent(process_group_id: int) -> bool:
+    """Resolve Darwin's ambiguous ``killpg(pgid, 0)`` EPERM via the full process table."""
+    try:
+        result = subprocess.run(
+            _DARWIN_PROCESS_TABLE_COMMAND,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=_PROCESS_GROUP_GRACE_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ProcessGroupTeardownUnverified(
+            process_group_id,
+            (
+                "killpg(0) returned EPERM and the Darwin process-table probe failed: "
+                f"{type(error).__name__}: {error}"
+            ),
+        ) from error
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "no stderr"
+        raise ProcessGroupTeardownUnverified(
+            process_group_id,
+            (
+                "killpg(0) returned EPERM and the Darwin process-table probe exited "
+                f"{result.returncode}: {detail}"
+            ),
+        )
+
+    observed_process = False
+    for line_number, line in enumerate(result.stdout.splitlines(), start=1):
+        columns = line.split()
+        if not columns:
+            continue
+        if len(columns) != 2:
+            raise ProcessGroupTeardownUnverified(
+                process_group_id,
+                (
+                    "killpg(0) returned EPERM and the Darwin process-table probe "
+                    f"returned malformed row {line_number}: {line!r}"
+                ),
+            )
+        try:
+            process_id, observed_group_id = (int(column) for column in columns)
+        except ValueError as error:
+            raise ProcessGroupTeardownUnverified(
+                process_group_id,
+                (
+                    "killpg(0) returned EPERM and the Darwin process-table probe "
+                    f"returned malformed row {line_number}: {line!r}"
+                ),
+            ) from error
+        if process_id <= 0 or observed_group_id <= 0:
+            raise ProcessGroupTeardownUnverified(
+                process_group_id,
+                (
+                    "killpg(0) returned EPERM and the Darwin process-table probe "
+                    f"returned invalid row {line_number}: {line!r}"
+                ),
+            )
+        observed_process = True
+        if observed_group_id == process_group_id:
+            return False
+
+    if not observed_process:
+        raise ProcessGroupTeardownUnverified(
+            process_group_id,
+            "killpg(0) returned EPERM and the Darwin process-table probe was empty",
+        )
+    return True
+
+
+def _terminate_non_posix_process(process: subprocess.Popen[str]) -> str:
+    try:
+        process.terminate()
+        process.wait(timeout=_PROCESS_GROUP_GRACE_SECONDS)
+        return f"process teardown: pid={process.pid} exited after terminate"
+    except ProcessLookupError:
+        return f"process teardown: pid={process.pid} proven already absent"
+    except subprocess.TimeoutExpired:
+        pass
+    except OSError as error:
+        raise ProcessGroupTeardownUnverified(
+            process.pid,
+            f"process termination failed: {type(error).__name__}: {error}",
+        ) from error
+    try:
+        process.kill()
+        process.wait(timeout=_PROCESS_GROUP_GRACE_SECONDS)
+        return f"process teardown: pid={process.pid} exited after kill"
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ProcessGroupTeardownUnverified(
+            process.pid,
+            f"process kill could not be verified: {type(error).__name__}: {error}",
+        ) from error
+
+
+def _wait_for_process(
+    process: subprocess.Popen[str],
+    *,
+    timeout_seconds: int,
+    cancel_event: threading.Event | None,
+) -> int:
+    if cancel_event is None:
+        return process.wait(timeout=timeout_seconds)
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if cancel_event.is_set():
+            teardown_evidence = _terminate_process(process)
+            raise RuntimeCancellationRequested(teardown_evidence)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout_seconds)
+        try:
+            return process.wait(timeout=min(remaining, 0.1))
+        except subprocess.TimeoutExpired:
+            continue
