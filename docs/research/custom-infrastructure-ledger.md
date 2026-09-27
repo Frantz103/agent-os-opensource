@@ -16,6 +16,7 @@ YAML, docs, and the NOOA role definitions themselves are excluded.
 | Antigravity pre-tool policy | Antigravity custom-agent frontmatter does not remove every built-in tool from a main agent | Direct CLI subscription work needs a fail-closed pre-execution gate for ambient, outward, destructive, and out-of-workspace calls | `src/agent_os/antigravity_policy.py` |
 | Multi-runtime process launcher | Omnigent, Prime Agent, Antigravity, and direct Codex each run sessions but know nothing about an Agent OS task id, status, or review gate | One command must bind task/workspace/context and bounds to any runtime, retain transcript/result references, and never confuse process success with approval | `src/agent_os/runner.py` |
 | Operator task CLI | Omnigent's CLI is session-oriented and NOOA's CLI is agent/eval-oriented | Operators need create/list/show/context/run commands for the explicit task model | `src/agent_os/cli.py` |
+| Local HTTP work service | The frameworks expose model and session APIs, not this product's task, attempt, evidence, artifact, cost, and cancellation contract | A non-Python control plane needs one loopback-only adapter that preserves Agent OS execution truth and does not accept caller-selected runtime authority | `src/agent_os/http_contract.py`, `src/agent_os/http_service.py` |
 | Gap measurement | Neither framework measures application-owned glue | The experiment requires current, reproducible code-size evidence for every manual seam | `scripts/custom_loc.py` |
 
 The Prime integration reuses the existing launcher and CLI rather than adding a daemon, scheduler,
@@ -57,24 +58,40 @@ the result against exact implementation attempts. The temporary home reuses a fi
 subscription login only for the process lifetime and is then destroyed; this remains lifecycle
 isolation rather than a model API client, persistent credential store, or general review engine.
 
+Attempt usage reuses runtime-owned observations rather than adding an accounting engine. Omnigent
+already persists provider-reported subtree token usage and dollars in its ephemeral conversation
+database; the launcher gives that database an attempt-owned temporary directory and reads the
+public `load_session_usage` result after execution. Direct Codex already emits cumulative token
+usage in its terminal event. Agent OS only carries those observations on the immutable attempt
+record. It does not decide whether a reported dollar figure is subscription-equivalent or
+actually billed, price missing usage, or copy Omnigent's rollups. Usage observation remains
+optional: an unreadable runtime database is retained as attempt evidence and cannot replace the
+runtime result or strand the attempt in a running state.
+
+The local HTTP service reuses the task store and direct Codex launcher. FastAPI supplies the
+loopback transport and validation. The adapter adds deterministic request identity, authenticated
+status, artifact and evidence projections, explicit cost provenance, and governed cancellation. It
+does not add remote scheduling, a provider client, a credential store, or a second authority model.
+
 ## Current measured size
 
-Verified on 2026-08-11:
+Verified on 2026-08-30:
 
 | Manual seam | Source LOC | Paths |
 | --- | ---: | --- |
-| execution identity registry | 152 | `src/agent_os/execution.py` |
-| typed task contracts | 103 | `src/agent_os/models.py` |
-| domain task persistence | 772 | `src/agent_os/store.py` |
+| execution identity registry | 177 | `src/agent_os/execution.py` |
+| typed task contracts | 170 | `src/agent_os/models.py` |
+| domain task persistence | 897 | `src/agent_os/store.py` |
 | cross-session context envelope | 62 | `src/agent_os/context.py` |
 | NOOA-to-Omnigent compiler | 276 | `src/agent_os/specs.py` |
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
 | Antigravity pre-tool policy | 75 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1229 | `src/agent_os/runner.py` |
-| operator task CLI | 259 | `src/agent_os/cli.py` |
-| gap measurement | 34 | `scripts/custom_loc.py` |
-| **Total** | **3,196** | |
+| multi-runtime process launcher | 1791 | `src/agent_os/runner.py` |
+| operator task CLI | 349 | `src/agent_os/cli.py` |
+| local HTTP work service | 1021 | `src/agent_os/http_contract.py`, `src/agent_os/http_service.py` |
+| gap measurement | 38 | `scripts/custom_loc.py` |
+| **Total** | **5,090** | |
 
 Refresh with:
 

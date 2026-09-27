@@ -1,7 +1,49 @@
 # Verification record
 
-Current release-candidate checks were run locally on 2026-08-11. Earlier framework probes below
-are retained as dated experimental evidence and are not substitutes for the alpha release gate.
+Current release-candidate checks were run locally on 2026-08-13 for `0.1.0a2`. Earlier framework
+probes below are retained as dated experimental evidence and are not substitutes for the alpha
+release gate.
+
+## 0.1.0a2 release gate (2026-08-13)
+
+Both bounded runs used disposable fixtures outside this repository and reached durable completion
+through a provider-independent review.
+
+- Local provider. Task `tsk_7405bed94032` required one exact edit to `message.txt`. Implementation
+  attempt `att_ea4ed373c371` recorded `builder_ollama/opencode-native/ollama` with model
+  `ollama/gemma4:26b` and changed only that file. Direct Codex review attempt `att_66b80a164368`
+  recorded `reviewer_codex/codex/openai` with `gpt-5.6-sol` and produced review `rev_3931aceabf7f`
+  with an evidence-bearing `approve`, moving the task to `completed`.
+- Cloud provider. Task `tsk_131f35cfeb88` required one exact edit to `value.py`. Implementation
+  attempt `att_0ca1d4d176a9` recorded `builder_antigravity/antigravity-cli/google` with
+  `gemini-3.6-flash-high`. Review attempt `att_5fb45f543145` produced `rev_d3552e98088e` with
+  `approve`, moving the task to `completed`.
+
+Two fail-closed behaviors were exercised as part of the same gate and are recorded because they
+demonstrate the completion contract rather than a defect:
+
+- A first local review returned `blocked` because the read-only review environment exposed no
+  usable temporary directory, so `pytest` could not initialize. The task moved to `blocked` rather
+  than `completed`, and a re-review of the same attempt was refused because that attempt already
+  carried a review record.
+- On task `tsk_39709164df1e`, an Antigravity attempt exited `SUCCESS` while changing nothing. The
+  task stopped at `needs_review`, and Codex review returned `request_changes` citing a clean
+  `git status` and an empty diff for attempt `att_df8764cfbfad`. A successful process and a model
+  claim did not complete the task.
+
+### Antigravity CLI compatibility note
+
+Verified against `agy` 1.1.12. Under `--sandbox`, that version restricts terminal execution: a
+`run_command` call for `python3 -m pytest` was denied by the CLI's own permission layer, not by the
+Agent OS `PreToolUse` policy, which independently evaluates the same call as `allow`. A later
+attempt reached the workspace Python but failed with `ModuleNotFoundError: No module named
+'encodings'`. `git status` and `git diff` executed normally.
+
+The practical consequence is that a direct Antigravity builder should not be given an acceptance
+criterion that requires it to run the test suite itself; verification belongs to the independent
+reviewer, which is not sandbox-restricted in the same way. The dated `agy` 1.1.6 evidence below,
+in which an Antigravity attempt did run the requested pytest, reflects the older CLI and is not
+current behavior.
 
 ## Codex model refresh and Antigravity direct runtime (2026-08-11)
 

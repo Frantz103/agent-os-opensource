@@ -18,12 +18,21 @@ from omnigent.opencode_native_app_server import (
 from agent_os import __version__
 from agent_os.context import build_task_context
 from agent_os.models import TaskStatus
+from agent_os.probe import (
+    CHECKS,
+    PROBE_RUNTIMES,
+    probe_exit_code,
+    render_report,
+    run_probe,
+)
 from agent_os.runner import (
     RunPlan,
+    RuntimeTerminated,
     check_antigravity_version,
     find_antigravity_cli,
     find_omnigent_cli,
     find_prime_agent_cli,
+    install_termination_handlers,
     resolve_antigravity_version,
     run_task,
 )
@@ -67,6 +76,39 @@ def _parser() -> argparse.ArgumentParser:
     reconcile = task_sub.add_parser("reconcile")
     reconcile.add_argument("--older-than-seconds", type=int, default=3600)
     reconcile.add_argument("--force", action="store_true")
+
+    review = sub.add_parser(
+        "review", help="Record an owner verdict against one exact implementation attempt"
+    )
+    review.add_argument("task_id")
+    review.add_argument("--attempt", required=True, dest="attempt_id")
+    review.add_argument("--verdict", required=True, choices=["approve", "request_changes"])
+    review.add_argument("--summary", required=True)
+    review.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="What you checked. Required to approve; repeatable.",
+    )
+    review.add_argument("--issue", action="append", default=[], dest="issues")
+
+    probe = sub.add_parser(
+        "probe",
+        help="Measure which boundaries a runtime enforces, against private offline targets",
+    )
+    probe.add_argument("--runtime", required=True, choices=list(PROBE_RUNTIMES))
+    probe.add_argument("--provider", help="Prime Agent intelligence provider")
+    probe.add_argument("--model", help="Runtime model identifier")
+    probe.add_argument("--timeout-seconds", type=int, default=900)
+    probe.add_argument(
+        "--require-denied",
+        default="",
+        metavar="CHECK[,CHECK...]",
+        help=(
+            "Exit non-zero unless each named check was attempted and refused. "
+            f"Choices: {', '.join(CHECKS)}."
+        ),
+    )
 
     context = sub.add_parser("context", help="Render the task context envelope")
     context.add_argument("task_id")
@@ -130,15 +172,16 @@ def _task_json(store: TaskStore, task_id: str) -> str:
 
 
 def _doctor(bundle: Path) -> int:
+    failures: list[str] = []
     checks = {
         "omnigent": find_omnigent_cli(),
         "claude": shutil.which("claude"),
         "codex": shutil.which("codex"),
     }
-    ok = True
     for name, path in checks.items():
         print(f"{name:10} {'OK ' + path if path else 'MISSING'}")
-        ok = ok and path is not None
+        if path is None:
+            failures.append(f"{name} is required and was not found on PATH")
     opencode = shutil.which("opencode")
     if opencode:
         try:
@@ -146,7 +189,7 @@ def _doctor(bundle: Path) -> int:
             check_opencode_version(version)
             print(f"{'opencode':10} OK {opencode} ({version})")
         except (OSError, OpenCodeVersionError) as error:
-            ok = False
+            failures.append(f"opencode is installed but unusable: {error}")
             print(f"{'opencode':10} INCOMPATIBLE {error}")
     else:
         print(f"{'opencode':10} OPTIONAL MISSING")
@@ -159,7 +202,7 @@ def _doctor(bundle: Path) -> int:
             rendered = ".".join(str(part) for part in version)
             print(f"{'antigravity':10} OK {antigravity} ({rendered})")
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-            ok = False
+            failures.append(f"antigravity is installed but unusable: {error}")
             print(f"{'antigravity':10} INCOMPATIBLE {error}")
     else:
         print(f"{'antigravity':10} OPTIONAL MISSING")
@@ -175,13 +218,26 @@ def _doctor(bundle: Path) -> int:
         validate_bundle(bundle)
         print(f"bundle     OK {bundle}")
     except Exception as error:
-        ok = False
+        failures.append(f"bundle {bundle} did not validate: {type(error).__name__}: {error}")
         print(f"bundle     INVALID {type(error).__name__}: {error}")
-    return 0 if ok else 1
+
+    if not failures:
+        return 0
+    print()
+    print("doctor failed:")
+    for item in failures:
+        print(f"  - {item}")
+    print(
+        "An optional runtime is safe to leave uninstalled, but one that is installed must also be "
+        "a supported version, because Agent OS may route work to it. Remove it or install a "
+        "supported release; see docs/providers.md."
+    )
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    install_termination_handlers()
     store = TaskStore(args.state_dir)
     bundle = args.bundle or store.state_dir / "bundles" / "coordinator"
 
@@ -250,6 +306,42 @@ def main(argv: list[str] | None = None) -> int:
             print(_task_json(store, args.task_id))
             return 0
 
+        if args.command == "review":
+            store.record_review(
+                args.task_id,
+                reviewer="reviewer_owner",
+                verdict=args.verdict,
+                summary=args.summary,
+                attempt_id=args.attempt_id,
+                issues=args.issues,
+                evidence=args.evidence,
+            )
+            if args.verdict == "approve":
+                store.complete_task(args.task_id, summary=args.summary)
+                print(f"{args.task_id}\tcompleted")
+            else:
+                store.transition(args.task_id, TaskStatus.BLOCKED, reason=args.summary)
+                print(f"{args.task_id}\tblocked")
+            return 0
+
+        if args.command == "probe":
+            required = tuple(
+                item.strip() for item in args.require_denied.split(",") if item.strip()
+            )
+            unknown = [item for item in required if item not in CHECKS]
+            if unknown:
+                raise ValueError(f"unknown probe check(s): {', '.join(unknown)}")
+            report = run_probe(
+                store,
+                bundle,
+                runtime=args.runtime,
+                provider=args.provider,
+                model=args.model,
+                timeout_seconds=args.timeout_seconds,
+            )
+            print(render_report(report))
+            return probe_exit_code(report, require_denied=required)
+
         if args.command == "context":
             print(build_task_context(store, args.task_id), end="")
             return 0
@@ -281,6 +373,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         return 130
+    except RuntimeTerminated as signal_name:
+        print(f"terminated on {signal_name}", file=sys.stderr)
+        return 143
 
     return 1
 
