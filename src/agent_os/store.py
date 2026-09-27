@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -24,6 +25,8 @@ from agent_os.models import (
 )
 
 SCHEMA_VERSION = 3
+TASK_ID_MAX_LENGTH = 128
+_TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -150,11 +153,17 @@ UPDATE schema_meta SET version = 3 WHERE key = 'schema_version';
 
 
 VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
-    TaskStatus.QUEUED: {TaskStatus.RUNNING, TaskStatus.BLOCKED, TaskStatus.FAILED},
+    TaskStatus.QUEUED: {
+        TaskStatus.RUNNING,
+        TaskStatus.BLOCKED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    },
     TaskStatus.RUNNING: {
         TaskStatus.NEEDS_REVIEW,
         TaskStatus.BLOCKED,
         TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.NEEDS_REVIEW: {
         TaskStatus.RUNNING,
@@ -164,6 +173,7 @@ VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.BLOCKED: {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.FAILED},
     TaskStatus.FAILED: {TaskStatus.QUEUED, TaskStatus.RUNNING},
     TaskStatus.COMPLETED: set(),
+    TaskStatus.CANCELLED: set(),
 }
 
 
@@ -173,6 +183,21 @@ def _now() -> str:
 
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def validate_task_id(task_id: str) -> str:
+    """Return a filename-safe durable identifier or fail before any path use."""
+
+    if (
+        not isinstance(task_id, str)
+        or not task_id
+        or len(task_id) > TASK_ID_MAX_LENGTH
+        or _TASK_ID_PATTERN.fullmatch(task_id) is None
+    ):
+        raise ValueError(
+            "task_id must be 1-128 ASCII letters, digits, underscores, or hyphens"
+        )
+    return task_id
 
 
 def default_state_dir() -> Path:
@@ -279,6 +304,7 @@ class TaskStore:
     def create_task(
         self,
         *,
+        task_id: str | None = None,
         title: str,
         objective: str,
         workspace: Path | str,
@@ -286,12 +312,14 @@ class TaskStore:
         constraints: list[str] | None = None,
         context: dict[str, str] | None = None,
     ) -> TaskSpec:
+        if task_id is not None:
+            task_id = validate_task_id(task_id)
         self.initialize()
         workspace_path = Path(workspace).expanduser().resolve(strict=True)
         if not workspace_path.is_dir():
             raise ValueError(f"workspace is not a directory: {workspace_path}")
         task = TaskSpec(
-            id=_id("tsk"),
+            id=task_id or _id("tsk"),
             title=title,
             objective=objective,
             workspace=workspace_path,
@@ -300,30 +328,44 @@ class TaskStore:
             context=context or {},
         )
         with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO tasks(
-                    id, title, objective, workspace, acceptance_json, constraints_json,
-                    context_json, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task.id,
-                    task.title,
-                    task.objective,
-                    str(task.workspace),
-                    json.dumps(task.acceptance_criteria),
-                    json.dumps(task.constraints),
-                    json.dumps(task.context, sort_keys=True),
-                    task.status.value,
-                    task.created_at.isoformat(),
-                    task.updated_at.isoformat(),
-                ),
-            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO tasks(
+                        id, title, objective, workspace, acceptance_json, constraints_json,
+                        context_json, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task.id,
+                        task.title,
+                        task.objective,
+                        str(task.workspace),
+                        json.dumps(task.acceptance_criteria),
+                        json.dumps(task.constraints),
+                        json.dumps(task.context, sort_keys=True),
+                        task.status.value,
+                        task.created_at.isoformat(),
+                        task.updated_at.isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                if task_id is None:
+                    raise
+                row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None:
+                    raise
+                existing = self._task_from_row(row)
+                if self._same_task_definition(existing, task):
+                    return existing
+                raise ValueError(
+                    f"task id already exists with different immutable fields: {task_id}"
+                ) from error
             self._append_event(connection, task.id, "task.created", {"title": task.title})
         return task
 
     def get_task(self, task_id: str) -> TaskSpec:
+        task_id = validate_task_id(task_id)
         self.initialize()
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -344,16 +386,25 @@ class TaskStore:
         return [self._task_from_row(row) for row in rows]
 
     def transition(self, task_id: str, target: TaskStatus | str, *, reason: str = "") -> TaskSpec:
-        current = self.get_task(task_id)
+        self.initialize()
         target = TaskStatus(target)
         if target is TaskStatus.COMPLETED:
             raise ValueError("completed transitions must use complete_task")
-        if target == current.status:
-            return current
-        if target not in VALID_TRANSITIONS[current.status]:
-            raise ValueError(f"invalid task transition: {current.status.value} -> {target.value}")
+        if target is TaskStatus.CANCELLED:
+            raise ValueError("cancelled transitions must use cancel_task")
         timestamp = _now()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            current = self._task_from_row(row)
+            if target == current.status:
+                return current
+            if target not in VALID_TRANSITIONS[current.status]:
+                raise ValueError(
+                    f"invalid task transition: {current.status.value} -> {target.value}"
+                )
             if target in {TaskStatus.BLOCKED, TaskStatus.FAILED}:
                 running = connection.execute(
                     """
@@ -381,6 +432,44 @@ class TaskStore:
             )
         return self.get_task(task_id)
 
+    def cancel_task(self, task_id: str, *, reason: str) -> TaskSpec:
+        """Cancel queued work or a running task whose attempts are already terminal."""
+        self.initialize()
+        timestamp = _now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            current = self._task_from_row(row)
+            if current.status is TaskStatus.CANCELLED:
+                return current
+            if current.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+                raise ValueError(f"task cannot be cancelled while {current.status.value}")
+            running = connection.execute(
+                "SELECT id FROM attempts WHERE task_id = ? AND status = 'running' LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if running is not None:
+                raise ValueError("cannot cancel a task with running attempts")
+            cursor = connection.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                (TaskStatus.CANCELLED.value, timestamp, task_id, current.status.value),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"task changed concurrently: {task_id}")
+            self._append_event(
+                connection,
+                task_id,
+                "task.transitioned",
+                {
+                    "from": current.status.value,
+                    "to": TaskStatus.CANCELLED.value,
+                    "reason": reason,
+                },
+            )
+        return self.get_task(task_id)
+
     def start_attempt(
         self,
         task_id: str,
@@ -390,27 +479,33 @@ class TaskStore:
         provider: str | None = None,
         model: str | None = None,
     ) -> AttemptRecord:
-        task = self.get_task(task_id)
-        if task.status is not TaskStatus.RUNNING:
-            raise ValueError("attempts may start only while the task is running")
+        self.initialize()
         work_item = work_item.strip()
         if not work_item:
             raise ValueError("work_item must not be empty")
         identity = execution_identity(agent, provider=provider, model=model)
         assert identity.provider is not None
-        attempt = AttemptRecord(
-            id=_id("att"),
-            task_id=task_id,
-            agent=agent,
-            harness=identity.harness,
-            provider=identity.provider,
-            model=identity.model,
-            kind=identity.kind,
-            work_item=work_item,
-            status=AttemptStatus.RUNNING,
-            started_at=datetime.now(UTC),
-        )
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            task_row = connection.execute(
+                "SELECT status FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task_row is None:
+                raise KeyError(f"task not found: {task_id}")
+            if TaskStatus(task_row["status"]) is not TaskStatus.RUNNING:
+                raise ValueError("attempts may start only while the task is running")
+            attempt = AttemptRecord(
+                id=_id("att"),
+                task_id=task_id,
+                agent=agent,
+                harness=identity.harness,
+                provider=identity.provider,
+                model=identity.model,
+                kind=identity.kind,
+                work_item=work_item,
+                status=AttemptStatus.RUNNING,
+                started_at=datetime.now(UTC),
+            )
             try:
                 connection.execute(
                     """
@@ -778,6 +873,18 @@ class TaskStore:
         connection.execute(
             "INSERT INTO task_events(task_id, kind, payload_json, created_at) VALUES (?, ?, ?, ?)",
             (task_id, kind, json.dumps(payload, sort_keys=True), _now()),
+        )
+
+    @staticmethod
+    def _same_task_definition(left: TaskSpec, right: TaskSpec) -> bool:
+        return (
+            left.id == right.id
+            and left.title == right.title
+            and left.objective == right.objective
+            and left.workspace == right.workspace
+            and left.acceptance_criteria == right.acceptance_criteria
+            and left.constraints == right.constraints
+            and left.context == right.context
         )
 
     @staticmethod
