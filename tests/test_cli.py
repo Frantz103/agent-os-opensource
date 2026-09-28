@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import signal
 from pathlib import Path
+
+import pytest
 
 from agent_os import cli
 from agent_os.models import AttemptStatus, TaskStatus
@@ -96,3 +100,288 @@ def test_run_timeout_exits_cleanly(monkeypatch, tmp_path: Path, capsys) -> None:
 
     assert cli.main(["--state-dir", str(state_dir), "run", task.id]) == 2
     assert capsys.readouterr().err == "error: omnigent process exceeded 1 seconds\n"
+
+
+def test_quickstart_create_show_and_context_round_trip(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    assert (
+        cli.main(
+            [
+                "--state-dir",
+                str(state_dir),
+                "task",
+                "create",
+                "--title",
+                "Add a repository health command",
+                "--objective",
+                "Add a read-only command that reports config and test readiness.",
+                "--workspace",
+                str(workspace),
+                "--accept",
+                "The command exits zero when required tools are present",
+                "--constraint",
+                "Do not push, merge, deploy, or contact external services",
+                "--context",
+                "ticket=FRA-1",
+            ]
+        )
+        == 0
+    )
+    task_id = capsys.readouterr().out.strip()
+    assert task_id.startswith("tsk_")
+
+    assert cli.main(["--state-dir", str(state_dir), "task", "show", task_id]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["id"] == task_id
+    assert payload["context"] == {"ticket": "FRA-1"}
+    assert payload["attempts"] == []
+    assert payload["reviews"] == []
+
+    assert cli.main(["--state-dir", str(state_dir), "task", "list"]) == 0
+    assert task_id in capsys.readouterr().out
+
+    assert cli.main(["--state-dir", str(state_dir), "context", task_id]) == 0
+    rendered = capsys.readouterr().out
+    assert "# Agent OS task contract" in rendered
+    assert "Do not push, merge, deploy, or contact external services" in rendered
+
+
+def test_task_create_rejects_malformed_context(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    assert (
+        cli.main(
+            [
+                "--state-dir",
+                str(state_dir),
+                "task",
+                "create",
+                "--title",
+                "Bad context",
+                "--objective",
+                "Reject malformed key/value context.",
+                "--workspace",
+                str(workspace),
+                "--accept",
+                "Exits non-zero",
+                "--context",
+                "not-a-pair",
+            ]
+        )
+        == 2
+    )
+    assert "context must use KEY=VALUE: not-a-pair" in capsys.readouterr().err
+
+
+def test_agents_command_lists_runtime_variants(tmp_path: Path, capsys) -> None:
+    assert cli.main(["--state-dir", str(tmp_path / "state"), "agents"]) == 0
+    listed = capsys.readouterr().out
+    assert "coordinator\tclaude-sdk" in listed
+    assert "builder_antigravity\tantigravity-cli" in listed
+
+
+def test_run_dry_run_prints_plan_and_redacts_task_context(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task = store.create_task(
+        title="Plan only",
+        objective="Show the execution plan without revealing task context.",
+        workspace=tmp_path,
+        acceptance_criteria=["Dry run prints the plan"],
+    )
+    plan = cli.RunPlan(
+        command=("omnigent", "run", "--print=SENSITIVE"),
+        cwd=tmp_path,
+        prompt="SENSITIVE",
+        runtime="omnigent",
+        agent="coordinator",
+        harness="claude-sdk",
+        provider="anthropic",
+    )
+    monkeypatch.setattr(cli, "run_task", lambda *args, **kwargs: plan)
+
+    assert cli.main(["--state-dir", str(state_dir), "run", task.id, "--dry-run"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "runtime: omnigent" in printed
+    assert "identity: coordinator/claude-sdk/anthropic" in printed
+    assert "model: runtime default" in printed
+    assert "SENSITIVE" not in printed
+
+
+def test_doctor_reports_missing_required_tool_with_summary(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    bundle = tmp_path / "coordinator"
+    sync_specs(bundle)
+    monkeypatch.setattr(cli, "find_omnigent_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_antigravity_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_prime_agent_cli", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+
+    assert cli._doctor(bundle) == 1
+
+    printed = capsys.readouterr().out
+    assert "omnigent   MISSING" in printed
+    assert "doctor failed:" in printed
+    assert "omnigent is required and was not found on PATH" in printed
+
+
+def test_doctor_reports_invalid_bundle(monkeypatch, tmp_path: Path, capsys) -> None:
+    bundle = tmp_path / "coordinator"
+    monkeypatch.setattr(cli, "find_omnigent_cli", lambda: "/bin/omnigent")
+    monkeypatch.setattr(cli, "find_antigravity_cli", lambda: None)
+    monkeypatch.setattr(cli, "find_prime_agent_cli", lambda: None)
+    monkeypatch.setattr(
+        cli.shutil, "which", lambda name: None if name == "opencode" else f"/bin/{name}"
+    )
+
+    assert cli._doctor(bundle) == 1
+
+    printed = capsys.readouterr().out
+    assert "bundle     INVALID" in printed
+    assert "did not validate" in printed
+
+
+def test_termination_handler_raises_so_cleanup_can_unwind() -> None:
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        cli.install_termination_handlers()
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler)
+        with pytest.raises(cli.RuntimeTerminated, match="SIGTERM"):
+            handler(signal.SIGTERM, None)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_run_terminated_by_supervisor_exits_cleanly(monkeypatch, tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task = store.create_task(
+        title="Terminate cleanly",
+        objective="Close the attempt when a supervisor cancels the process.",
+        workspace=tmp_path,
+        acceptance_criteria=["CLI reports the terminating signal"],
+    )
+
+    def terminate(*args, **kwargs):
+        raise cli.RuntimeTerminated("SIGTERM")
+
+    monkeypatch.setattr(cli, "run_task", terminate)
+
+    assert cli.main(["--state-dir", str(state_dir), "run", task.id]) == 143
+    assert capsys.readouterr().err == "terminated on SIGTERM\n"
+
+
+def _succeeded_implementation(store: TaskStore, tmp_path: Path):
+    task = store.create_task(
+        title="Owner review",
+        objective="Let the owner supply the independent verdict.",
+        workspace=tmp_path,
+        acceptance_criteria=["Owner approves the exact attempt"],
+    )
+    store.transition(task.id, TaskStatus.RUNNING)
+    attempt = store.start_attempt(task.id, agent="builder_ollama")
+    store.finish_attempt(
+        attempt.id,
+        status=AttemptStatus.SUCCEEDED,
+        summary="done",
+        evidence=["message.txt changed from before to release"],
+    )
+    store.transition(task.id, TaskStatus.NEEDS_REVIEW)
+    return task, attempt
+
+
+def test_owner_verdict_completes_the_task(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, attempt = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", attempt.id,
+                "--verdict", "approve",
+                "--summary", "Owner checked the diff and the test.",
+                "--evidence", "git diff shows only the intended file",
+            ]
+        )
+        == 0
+    )
+    assert "completed" in capsys.readouterr().out
+    stored = store.get_task(task.id)
+    assert stored.status is TaskStatus.COMPLETED
+    review = store.list_reviews(task.id)[0]
+    assert review.reviewer == "reviewer_owner"
+    assert review.provider == "operator"
+    assert review.attempt_id == attempt.id
+
+
+def test_owner_approval_without_evidence_is_refused(tmp_path: Path, capsys) -> None:
+    """An owner verdict is a review, not a rubber stamp."""
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, attempt = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", attempt.id,
+                "--verdict", "approve",
+                "--summary", "Looks fine.",
+            ]
+        )
+        == 2
+    )
+    assert "approved reviews require evidence" in capsys.readouterr().err
+    assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW
+
+
+def test_owner_request_changes_blocks_the_task(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, attempt = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", attempt.id,
+                "--verdict", "request_changes",
+                "--summary", "The test does not cover the stated criterion.",
+                "--issue", "missing coverage",
+            ]
+        )
+        == 0
+    )
+    assert store.get_task(task.id).status is TaskStatus.BLOCKED
+
+
+def test_owner_verdict_requires_an_exact_attempt(tmp_path: Path, capsys) -> None:
+    state_dir = tmp_path / "state"
+    store = TaskStore(state_dir)
+    task, _ = _succeeded_implementation(store, tmp_path)
+
+    assert (
+        cli.main(
+            [
+                "--state-dir", str(state_dir), "review", task.id,
+                "--attempt", "att_does_not_exist",
+                "--verdict", "approve",
+                "--summary", "Approving without naming the real attempt.",
+                "--evidence", "none",
+            ]
+        )
+        == 2
+    )
+    assert store.get_task(task.id).status is TaskStatus.NEEDS_REVIEW

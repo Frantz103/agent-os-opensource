@@ -16,6 +16,10 @@ SEAMS = {
     "Antigravity pre-tool policy": ["src/agent_os/antigravity_policy.py"],
     "multi-runtime process launcher": ["src/agent_os/runner.py"],
     "operator task CLI": ["src/agent_os/cli.py"],
+    "local HTTP work service": [
+        "src/agent_os/http_contract.py",
+        "src/agent_os/http_service.py",
+    ],
     "gap measurement": ["scripts/custom_loc.py"],
 }
 

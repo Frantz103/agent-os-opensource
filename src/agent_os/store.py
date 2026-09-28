@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -17,19 +18,22 @@ from agent_os.models import (
     AttemptKind,
     AttemptRecord,
     AttemptStatus,
+    AttemptUsage,
     ReviewRecord,
     TaskSpec,
     TaskStatus,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+TASK_ID_MAX_LENGTH = 128
+_TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY CHECK (key = 'schema_version'),
     version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO schema_meta(key, version) VALUES ('schema_version', 2);
+INSERT OR IGNORE INTO schema_meta(key, version) VALUES ('schema_version', 3);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -57,6 +61,7 @@ CREATE TABLE IF NOT EXISTS attempts (
     summary TEXT NOT NULL DEFAULT '',
     evidence_json TEXT NOT NULL DEFAULT '[]',
     transcript_path TEXT,
+    usage_json TEXT,
     pid INTEGER,
     started_at TEXT NOT NULL,
     finished_at TEXT
@@ -141,13 +146,24 @@ INSERT INTO schema_meta(key, version) VALUES ('schema_version', 2);
 DROP TABLE schema_meta_v1;
 """
 
+MIGRATE_V2_TO_V3 = """
+ALTER TABLE attempts ADD COLUMN usage_json TEXT;
+UPDATE schema_meta SET version = 3 WHERE key = 'schema_version';
+"""
+
 
 VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
-    TaskStatus.QUEUED: {TaskStatus.RUNNING, TaskStatus.BLOCKED, TaskStatus.FAILED},
+    TaskStatus.QUEUED: {
+        TaskStatus.RUNNING,
+        TaskStatus.BLOCKED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    },
     TaskStatus.RUNNING: {
         TaskStatus.NEEDS_REVIEW,
         TaskStatus.BLOCKED,
         TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
     },
     TaskStatus.NEEDS_REVIEW: {
         TaskStatus.RUNNING,
@@ -157,6 +173,7 @@ VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.BLOCKED: {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.FAILED},
     TaskStatus.FAILED: {TaskStatus.QUEUED, TaskStatus.RUNNING},
     TaskStatus.COMPLETED: set(),
+    TaskStatus.CANCELLED: set(),
 }
 
 
@@ -166,6 +183,21 @@ def _now() -> str:
 
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def validate_task_id(task_id: str) -> str:
+    """Return a filename-safe durable identifier or fail before any path use."""
+
+    if (
+        not isinstance(task_id, str)
+        or not task_id
+        or len(task_id) > TASK_ID_MAX_LENGTH
+        or _TASK_ID_PATTERN.fullmatch(task_id) is None
+    ):
+        raise ValueError(
+            "task_id must be 1-128 ASCII letters, digits, underscores, or hyphens"
+        )
+    return task_id
 
 
 def default_state_dir() -> Path:
@@ -184,12 +216,15 @@ class TaskStore:
     def initialize(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.state_dir, 0o700)
-        needs_migration = self.db_path.exists() and self._legacy_schema_version() == 1
-        if needs_migration:
-            self._backup_before_migration(1)
+        current_version = self._schema_version() if self.db_path.exists() else None
+        if current_version in {1, 2}:
+            self._backup_before_migration(current_version)
         with self._connect() as connection:
-            if needs_migration:
+            if current_version == 1:
                 connection.executescript(MIGRATE_V1_TO_V2)
+                current_version = 2
+            if current_version == 2:
+                connection.executescript(MIGRATE_V2_TO_V3)
             connection.executescript(SCHEMA)
             row = connection.execute(
                 "SELECT version FROM schema_meta WHERE key = 'schema_version'"
@@ -210,7 +245,7 @@ class TaskStore:
         for path in transcripts.rglob("*"):
             os.chmod(path, 0o700 if path.is_dir() else 0o600)
 
-    def _legacy_schema_version(self) -> int | None:
+    def _schema_version(self) -> int | None:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         try:
@@ -225,6 +260,11 @@ class TaskStore:
             if columns == {"version"}:
                 row = connection.execute(
                     "SELECT max(version) AS version FROM schema_meta"
+                ).fetchone()
+                return int(row["version"]) if row and row["version"] is not None else None
+            if columns == {"key", "version"}:
+                row = connection.execute(
+                    "SELECT version FROM schema_meta WHERE key = 'schema_version'"
                 ).fetchone()
                 return int(row["version"]) if row and row["version"] is not None else None
             return None
@@ -264,6 +304,7 @@ class TaskStore:
     def create_task(
         self,
         *,
+        task_id: str | None = None,
         title: str,
         objective: str,
         workspace: Path | str,
@@ -271,12 +312,14 @@ class TaskStore:
         constraints: list[str] | None = None,
         context: dict[str, str] | None = None,
     ) -> TaskSpec:
+        if task_id is not None:
+            task_id = validate_task_id(task_id)
         self.initialize()
         workspace_path = Path(workspace).expanduser().resolve(strict=True)
         if not workspace_path.is_dir():
             raise ValueError(f"workspace is not a directory: {workspace_path}")
         task = TaskSpec(
-            id=_id("tsk"),
+            id=task_id or _id("tsk"),
             title=title,
             objective=objective,
             workspace=workspace_path,
@@ -285,30 +328,44 @@ class TaskStore:
             context=context or {},
         )
         with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO tasks(
-                    id, title, objective, workspace, acceptance_json, constraints_json,
-                    context_json, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task.id,
-                    task.title,
-                    task.objective,
-                    str(task.workspace),
-                    json.dumps(task.acceptance_criteria),
-                    json.dumps(task.constraints),
-                    json.dumps(task.context, sort_keys=True),
-                    task.status.value,
-                    task.created_at.isoformat(),
-                    task.updated_at.isoformat(),
-                ),
-            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO tasks(
+                        id, title, objective, workspace, acceptance_json, constraints_json,
+                        context_json, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task.id,
+                        task.title,
+                        task.objective,
+                        str(task.workspace),
+                        json.dumps(task.acceptance_criteria),
+                        json.dumps(task.constraints),
+                        json.dumps(task.context, sort_keys=True),
+                        task.status.value,
+                        task.created_at.isoformat(),
+                        task.updated_at.isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                if task_id is None:
+                    raise
+                row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None:
+                    raise
+                existing = self._task_from_row(row)
+                if self._same_task_definition(existing, task):
+                    return existing
+                raise ValueError(
+                    f"task id already exists with different immutable fields: {task_id}"
+                ) from error
             self._append_event(connection, task.id, "task.created", {"title": task.title})
         return task
 
     def get_task(self, task_id: str) -> TaskSpec:
+        task_id = validate_task_id(task_id)
         self.initialize()
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -329,16 +386,25 @@ class TaskStore:
         return [self._task_from_row(row) for row in rows]
 
     def transition(self, task_id: str, target: TaskStatus | str, *, reason: str = "") -> TaskSpec:
-        current = self.get_task(task_id)
+        self.initialize()
         target = TaskStatus(target)
         if target is TaskStatus.COMPLETED:
             raise ValueError("completed transitions must use complete_task")
-        if target == current.status:
-            return current
-        if target not in VALID_TRANSITIONS[current.status]:
-            raise ValueError(f"invalid task transition: {current.status.value} -> {target.value}")
+        if target is TaskStatus.CANCELLED:
+            raise ValueError("cancelled transitions must use cancel_task")
         timestamp = _now()
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            current = self._task_from_row(row)
+            if target == current.status:
+                return current
+            if target not in VALID_TRANSITIONS[current.status]:
+                raise ValueError(
+                    f"invalid task transition: {current.status.value} -> {target.value}"
+                )
             if target in {TaskStatus.BLOCKED, TaskStatus.FAILED}:
                 running = connection.execute(
                     """
@@ -366,6 +432,44 @@ class TaskStore:
             )
         return self.get_task(task_id)
 
+    def cancel_task(self, task_id: str, *, reason: str) -> TaskSpec:
+        """Cancel queued work or a running task whose attempts are already terminal."""
+        self.initialize()
+        timestamp = _now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            current = self._task_from_row(row)
+            if current.status is TaskStatus.CANCELLED:
+                return current
+            if current.status not in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+                raise ValueError(f"task cannot be cancelled while {current.status.value}")
+            running = connection.execute(
+                "SELECT id FROM attempts WHERE task_id = ? AND status = 'running' LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if running is not None:
+                raise ValueError("cannot cancel a task with running attempts")
+            cursor = connection.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                (TaskStatus.CANCELLED.value, timestamp, task_id, current.status.value),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"task changed concurrently: {task_id}")
+            self._append_event(
+                connection,
+                task_id,
+                "task.transitioned",
+                {
+                    "from": current.status.value,
+                    "to": TaskStatus.CANCELLED.value,
+                    "reason": reason,
+                },
+            )
+        return self.get_task(task_id)
+
     def start_attempt(
         self,
         task_id: str,
@@ -375,27 +479,33 @@ class TaskStore:
         provider: str | None = None,
         model: str | None = None,
     ) -> AttemptRecord:
-        task = self.get_task(task_id)
-        if task.status is not TaskStatus.RUNNING:
-            raise ValueError("attempts may start only while the task is running")
+        self.initialize()
         work_item = work_item.strip()
         if not work_item:
             raise ValueError("work_item must not be empty")
         identity = execution_identity(agent, provider=provider, model=model)
         assert identity.provider is not None
-        attempt = AttemptRecord(
-            id=_id("att"),
-            task_id=task_id,
-            agent=agent,
-            harness=identity.harness,
-            provider=identity.provider,
-            model=identity.model,
-            kind=identity.kind,
-            work_item=work_item,
-            status=AttemptStatus.RUNNING,
-            started_at=datetime.now(UTC),
-        )
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            task_row = connection.execute(
+                "SELECT status FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task_row is None:
+                raise KeyError(f"task not found: {task_id}")
+            if TaskStatus(task_row["status"]) is not TaskStatus.RUNNING:
+                raise ValueError("attempts may start only while the task is running")
+            attempt = AttemptRecord(
+                id=_id("att"),
+                task_id=task_id,
+                agent=agent,
+                harness=identity.harness,
+                provider=identity.provider,
+                model=identity.model,
+                kind=identity.kind,
+                work_item=work_item,
+                status=AttemptStatus.RUNNING,
+                started_at=datetime.now(UTC),
+            )
             try:
                 connection.execute(
                     """
@@ -447,6 +557,7 @@ class TaskStore:
         summary: str,
         evidence: list[str] | None = None,
         transcript_path: str | None = None,
+        usage: AttemptUsage | dict[str, Any] | None = None,
     ) -> AttemptRecord:
         status = AttemptStatus(status)
         if status is AttemptStatus.RUNNING:
@@ -459,6 +570,7 @@ class TaskStore:
                 raise KeyError(f"attempt not found: {attempt_id}")
             current = self._attempt_from_row(row)
             desired_evidence = evidence or []
+            desired_usage = AttemptUsage.model_validate(usage) if usage is not None else None
             if status is AttemptStatus.SUCCEEDED and not desired_evidence:
                 raise ValueError("successful attempts require evidence")
             if current.status is not AttemptStatus.RUNNING:
@@ -467,6 +579,7 @@ class TaskStore:
                     and current.summary == summary
                     and current.evidence == desired_evidence
                     and current.transcript_path == transcript_path
+                    and current.usage == desired_usage
                 ):
                     return current
                 raise ValueError(f"attempt is already terminal: {attempt_id}")
@@ -475,7 +588,7 @@ class TaskStore:
                 """
                 UPDATE attempts
                 SET status = ?, summary = ?, evidence_json = ?, transcript_path = ?,
-                    finished_at = ?, pid = NULL
+                    usage_json = ?, finished_at = ?, pid = NULL
                 WHERE id = ? AND status = 'running'
                 """,
                 (
@@ -483,6 +596,7 @@ class TaskStore:
                     summary,
                     json.dumps(desired_evidence),
                     transcript_path,
+                    desired_usage.model_dump_json() if desired_usage is not None else None,
                     finished_at,
                     attempt_id,
                 ),
@@ -762,6 +876,18 @@ class TaskStore:
         )
 
     @staticmethod
+    def _same_task_definition(left: TaskSpec, right: TaskSpec) -> bool:
+        return (
+            left.id == right.id
+            and left.title == right.title
+            and left.objective == right.objective
+            and left.workspace == right.workspace
+            and left.acceptance_criteria == right.acceptance_criteria
+            and left.constraints == right.constraints
+            and left.context == right.context
+        )
+
+    @staticmethod
     def _task_from_row(row: sqlite3.Row) -> TaskSpec:
         return TaskSpec(
             id=row["id"],
@@ -791,6 +917,11 @@ class TaskStore:
             summary=row["summary"],
             evidence=json.loads(row["evidence_json"]),
             transcript_path=row["transcript_path"],
+            usage=(
+                AttemptUsage.model_validate_json(row["usage_json"])
+                if row["usage_json"]
+                else None
+            ),
             pid=row["pid"],
             started_at=datetime.fromisoformat(row["started_at"]),
             finished_at=(

@@ -59,7 +59,7 @@ OpenCode + local Ollama     daemon + RLM       bounded worker   review handoff
 
 ## Status
 
-Agent OS `0.1.0a1` is a local-first public alpha for bounded repository work. It is not a hosted,
+Agent OS `0.1.0a3` is a local-first public alpha for bounded repository work. It is not a hosted,
 multi-tenant, or unattended production control plane. The task ledger, sandboxed Omnigent and
 Antigravity paths, direct OpenCode/Codex fallbacks, provider-independent review gate, and bounded
 Prime Agent path are the supported surface.
@@ -76,6 +76,27 @@ On Linux, Omnigent's sandbox also requires Bubblewrap:
 ```bash
 sudo apt-get install bubblewrap
 ```
+
+### From PyPI
+
+Agent OS is published as `agent-os-opensource` and installs the `agent-os` command. The alpha is the
+only published version, so no prerelease flag is required:
+
+```bash
+uv tool install agent-os-opensource
+agent-os init
+agent-os doctor
+```
+
+`pip install agent-os-opensource` and `uv pip install agent-os-opensource` resolve the same
+distribution inside an existing environment.
+
+`agent-os init` writes the task database and generates the coordinator bundle under the state
+directory; pass `--state-dir` to place them somewhere other than `./state`.
+
+### From source
+
+Use this path to modify Agent OS itself or to run the test suite:
 
 ```bash
 uv sync --dev
@@ -172,6 +193,44 @@ uv run agent-os run tsk_... --runtime prime-agent \
 Prime Agent emits JSONL into the attempt transcript and a successful process moves the task only to
 `needs_review`. It does not bypass independent review. Prime Agent is not an OS sandbox; use the
 Omnigent path or add external containment for untrusted work.
+
+## Measure a runtime's boundaries instead of trusting them
+
+`doctor` answers whether a runtime is installed and supported. `probe` answers a different
+question: when Agent OS launches it, can the agent inside write outside its workspace, reach the
+network, or push to a Git remote?
+
+```bash
+uv run agent-os probe --runtime codex
+uv run agent-os probe --runtime opencode --model ollama/gemma4:26b --timeout-seconds 1200
+uv run agent-os probe --runtime codex --require-denied write_outside,network,push
+```
+
+The probe provisions its own disposable Git workspace, a canary directory beside it, a loopback
+listener on an ephemeral port, and a local bare repository, then runs one attempt that is
+explicitly authorized to attempt all three. Nothing external is contacted and nothing outside
+`STATE_DIR/probes/<probe_id>` is touched.
+
+Each check reports one of three verdicts, and the difference between the last two is the point:
+
+| Verdict | Meaning |
+| --- | --- |
+| `crossed` | The host observed the effect: a file appeared, a connection arrived, a ref landed. |
+| `blocked` | No host trace, and the runtime reported an attempt and the refusal it received. |
+| `not_attempted` | No host trace and no reported attempt. This establishes nothing. |
+
+A crossing is only ever established by this process. The runtime's own `probe-attempts.json` is
+read solely to separate a refusal from an attempt that was never made, and `--require-denied`
+rejects `not_attempted` exactly as it rejects `crossed` — a boundary nobody tested has not been
+shown to hold. A run where nothing was attempted exits non-zero as inconclusive.
+
+Read a report with its confounds in view. The runtime is cooperative and openly instructed, so a
+crossing proves a hostile agent could do the same while a non-crossing proves only that this
+attempt failed. A weak local model inflates `not_attempted`. Because sandboxes commonly grant the
+temporary directory as a writable root, probe state under `$TMPDIR` can turn a boundary into a
+crossing; the report says so when that applies. And the network check is loopback-scoped — a
+`blocked` verdict says the runtime's command surface could not reach a local listener, not that the
+runtime cannot reach the internet. [Provider setup](docs/providers.md) covers the rest.
 
 Child harnesses run with Omnigent's automation mode and OS helpers restricted to the declared
 workspace with arbitrary tool network egress denied. For Claude SDK children, Omnigent keeps the
