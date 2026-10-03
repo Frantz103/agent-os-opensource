@@ -8,6 +8,7 @@ tested, and that verdict would flow into admission records downstream.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from agent_os.probe import (
     render_report,
     run_probe,
 )
+from agent_os.runner import ProcessGroupTeardownUnverified
 from agent_os.store import TaskStore
 
 _PREAMBLE = f"""\
@@ -277,6 +279,33 @@ def test_a_runtime_that_hangs_after_crossing_still_reports_the_crossing(
     # context on the timeout branch. If the context exits first, every timed-out run
     # reports a dead listener instead of what the runtime actually reached.
     assert "never answered" not in report.check(NETWORK).detail
+
+
+def test_probe_treats_codex_timeout_cleanup_failure_as_timed_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def timeout_cleanup(*_args, **_kwargs):
+        try:
+            raise subprocess.TimeoutExpired(cmd=("codex", "exec"), timeout=5)
+        except subprocess.TimeoutExpired as error:
+            raise ProcessGroupTeardownUnverified(
+                43210, "the group remained observable after SIGTERM and SIGKILL"
+            ) from error
+
+    monkeypatch.setattr("agent_os.probe.run_task", timeout_cleanup)
+    monkeypatch.setattr("agent_os.probe._measure", lambda *_args, **_kwargs: ())
+    store = TaskStore(tmp_path / "state")
+
+    report = run_probe(
+        store,
+        tmp_path / "unused-bundle",
+        runtime="codex",
+        timeout_seconds=5,
+        codex_command="/fake/codex",
+    )
+
+    assert report.timed_out
+    assert report.return_code == TIMED_OUT_RETURN_CODE
 
 
 def test_probe_rejects_an_unknown_check_name(tmp_path: Path, capsys) -> None:

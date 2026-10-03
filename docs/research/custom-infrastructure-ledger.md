@@ -54,6 +54,11 @@ agents, and the native OS sandbox. Agent OS adds version validation, durable tas
 state-owned configuration, terminal-result parsing, and the pre-tool hook required by the product's
 outward-mutation boundary. It does not implement a Google API client or credential store.
 
+The Prime Agent launcher also removes the Agent OS state and task identifiers from its child
+environment. Prime supplies its own runtime and has no need for the Omnigent task-tool bridge;
+withholding these two host-owned values keeps its general shell/IPython execution boundary from
+writing the durable task and review ledger directly.
+
 The other direct seam invokes Codex for either workspace-write implementation or read-only review.
 Omnigent 0.8.2's root Codex launch entered an interactive tmux flow in headless probes, so the
 launcher invokes `codex exec` ephemerally, disables approval escalation, and gives it an
@@ -79,7 +84,7 @@ does not add remote scheduling, a provider client, a credential store, or a seco
 
 ## Current measured size
 
-Verified on 2026-08-30:
+Verified on 2026-09-28:
 
 | Manual seam | Source LOC | Paths |
 | --- | ---: | --- |
@@ -91,11 +96,11 @@ Verified on 2026-08-30:
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
 | Antigravity pre-tool policy | 105 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1792 | `src/agent_os/runner.py` |
+| multi-runtime process launcher | 1795 | `src/agent_os/runner.py` |
 | operator task CLI | 349 | `src/agent_os/cli.py` |
 | local HTTP work service | 1021 | `src/agent_os/http_contract.py`, `src/agent_os/http_service.py` |
 | gap measurement | 38 | `scripts/custom_loc.py` |
-| **Total** | **5,121** | |
+| **Total** | **5,124** | |
 
 Refresh with:
 
