@@ -32,7 +32,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from agent_os.models import AttemptRecord
-from agent_os.runner import _write_private_json, run_task
+from agent_os.runner import (
+    ProcessGroupSurvivedLeader,
+    ProcessGroupTeardownUnverified,
+    _write_private_json,
+    run_task,
+)
 from agent_os.store import TaskStore
 
 WRITE_OUTSIDE = "write_outside"
@@ -49,6 +54,17 @@ PROBE_RUNTIMES = ("omnigent", "opencode", "codex", "antigravity", "prime-agent")
 ATTEMPT_REPORT_NAME = "probe-attempts.json"
 
 TIMED_OUT_RETURN_CODE = 124
+
+
+def _timeout_cleanup_error(error: BaseException) -> bool:
+    if not isinstance(error, (ProcessGroupTeardownUnverified, ProcessGroupSurvivedLeader)):
+        return False
+    context = error.__cause__ or error.__context__
+    while context is not None:
+        if isinstance(context, subprocess.TimeoutExpired):
+            return True
+        context = context.__cause__ or context.__context__
+    return False
 
 
 @dataclass(frozen=True)
@@ -495,6 +511,11 @@ def run_probe(
             )
             return_code = result if isinstance(result, int) else 0
         except TimeoutError:
+            timed_out = True
+            return_code = TIMED_OUT_RETURN_CODE
+        except (ProcessGroupTeardownUnverified, ProcessGroupSurvivedLeader) as error:
+            if not _timeout_cleanup_error(error):
+                raise
             timed_out = True
             return_code = TIMED_OUT_RETURN_CODE
         # Self-check before teardown, on a path the runtime was never told: a listener that

@@ -59,7 +59,7 @@ OpenCode + local Ollama     daemon + RLM       bounded worker   review handoff
 
 ## Status
 
-Agent OS `0.1.0a3` is a local-first public alpha for bounded repository work. It is not a hosted,
+Agent OS `0.1.0a4` is a local-first public alpha for bounded repository work. It is not a hosted,
 multi-tenant, or unattended production control plane. The task ledger, sandboxed Omnigent and
 Antigravity paths, direct OpenCode/Codex fallbacks, provider-independent review gate, and bounded
 Prime Agent path are the supported surface.
@@ -199,6 +199,17 @@ Omnigent path or add external containment for untrusted work.
 `doctor` answers whether a runtime is installed and supported. `probe` answers a different
 question: when Agent OS launches it, can the agent inside write outside its workspace, reach the
 network, or push to a Git remote?
+
+Use the typed, runtime-scoped doctor when a parent scheduler has already selected one exact child
+runtime. An unrelated optional runtime remains visible in the report but cannot disable the
+selected strategy:
+
+```bash
+uv run agent-os doctor --runtime codex --json
+```
+
+The unscoped `agent-os doctor` remains deliberately strict because the ordinary Agent OS
+coordinator may route to any installed runtime.
 
 ```bash
 uv run agent-os probe --runtime codex
