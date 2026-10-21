@@ -24,6 +24,11 @@ uv run agent-os review tsk_... --attempt att_... --verdict approve \
   --evidence "What you actually checked"
 ```
 
+Owner review is intentionally interactive. The command reads confirmation from the operator's
+controlling terminal and requires the exact verdict and attempt ID; it refuses piped input and
+detached runtime processes. This keeps a model runtime that knows the state directory and task ID
+from recording an operator verdict.
+
 Its provider is `operator`, which differs from every model provider, so the independence gate is
 satisfied rather than bypassed. The same rules apply as to a model reviewer: the verdict binds to
 one implementation attempt, an approval without evidence is refused, and `request_changes` blocks
