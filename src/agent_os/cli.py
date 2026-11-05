@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -187,6 +188,24 @@ def _task_json(store: TaskStore, task_id: str) -> str:
     payload["reviews"] = [item.model_dump(mode="json") for item in store.list_reviews(task_id)]
     payload["events"] = store.list_events(task_id)
     return json.dumps(payload, indent=2)
+
+
+def _confirm_owner_review(task_id: str, attempt_id: str, verdict: str) -> None:
+    """Require confirmation from the operator's controlling terminal."""
+    expected = f"{verdict} {attempt_id}"
+    try:
+        with open("/dev/tty", "r+", encoding="utf-8") as terminal:
+            if not os.isatty(terminal.fileno()):
+                raise ValueError("owner review requires an interactive controlling terminal")
+            terminal.write(
+                f"Confirm owner verdict for task {task_id}.\nType '{expected}' to continue: "
+            )
+            terminal.flush()
+            confirmation = terminal.readline().strip()
+    except OSError as error:
+        raise ValueError("owner review requires an interactive controlling terminal") from error
+    if confirmation != expected:
+        raise ValueError("owner review confirmation did not match the exact verdict and attempt")
 
 
 _DOCTOR_RUNTIME_REQUIREMENTS = {
@@ -453,6 +472,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "review":
+            _confirm_owner_review(args.task_id, args.attempt_id, args.verdict)
             store.record_review(
                 args.task_id,
                 reviewer="reviewer_owner",
