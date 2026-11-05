@@ -95,12 +95,12 @@ Verified on 2026-09-28:
 | NOOA-to-Omnigent compiler | 276 | `src/agent_os/specs.py` |
 | Omnigent task tool bridge | 147 | `src/agent_os/tools.py` |
 | governed child-dispatch policy | 87 | `src/agent_os/policies.py` |
-| Antigravity pre-tool policy | 105 | `src/agent_os/antigravity_policy.py` |
-| multi-runtime process launcher | 1795 | `src/agent_os/runner.py` |
-| operator task CLI | 349 | `src/agent_os/cli.py` |
+| Antigravity pre-tool policy | 75 | `src/agent_os/antigravity_policy.py` |
+| multi-runtime process launcher | 1794 | `src/agent_os/runner.py` |
+| operator task CLI | 480 | `src/agent_os/cli.py` |
 | local HTTP work service | 1021 | `src/agent_os/http_contract.py`, `src/agent_os/http_service.py` |
 | gap measurement | 38 | `scripts/custom_loc.py` |
-| **Total** | **5,124** | |
+| **Total** | **5,224** | |
 
 Refresh with:
 

@@ -25,34 +25,11 @@ _ALLOWED_TOOLS = {
     "manage_task",
     "multi_replace_file_content",
     "replace_file_content",
-    "run_command",
     "view_file",
     "wait",
     "wait_5_seconds",
     "write_to_file",
 }
-_FORBIDDEN_COMMAND_FRAGMENTS = (
-    "curl ",
-    "docker push",
-    "git clean",
-    "git commit",
-    "git merge",
-    "git push",
-    "git reset",
-    "gh ",
-    "kubectl ",
-    "npm publish",
-    "open ",
-    "osascript",
-    "rm -rf",
-    "scp ",
-    "ssh ",
-    "sudo ",
-    "terraform apply",
-    "twine upload",
-    "wget ",
-    "wrangler ",
-)
 
 
 def _inside(path: str, workspace: Path) -> bool:
@@ -87,13 +64,6 @@ def evaluate(payload: dict[str, Any], workspace: Path) -> dict[str, str]:
                 "decision": "deny",
                 "reason": f"{key} is outside the declared Agent OS workspace",
             }
-    if name == "run_command":
-        command = arguments.get("CommandLine")
-        if not isinstance(command, str) or not command.strip():
-            return {"decision": "deny", "reason": "empty command is not allowed"}
-        normalized = f" {command.lower().strip()} "
-        if any(fragment in normalized for fragment in _FORBIDDEN_COMMAND_FRAGMENTS):
-            return {"decision": "deny", "reason": "outward or destructive command denied"}
     return {"decision": "allow", "reason": "allowed by the bounded Agent OS runtime"}
 
 
