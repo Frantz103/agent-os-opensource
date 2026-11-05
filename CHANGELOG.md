@@ -5,6 +5,11 @@ changes.
 
 ## Unreleased
 
+### Security
+
+- The lock file takes the advised fixes for aiohttp, certifi, litellm, mcp, multidict, PyJWT
+  and urllib3. `pip-audit` reports no known vulnerabilities.
+
 ## 0.1.0a4 - 2026-08-15
 
 ### Added
